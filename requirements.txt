@@ -1,0 +1,9 @@
+# QtCore/QtGui/QtWidgets 都在 Essentials 中；不安装体积很大的 3D/WebEngine Addons。
+PySide6-Essentials==6.8.3
+numpy>=2.0,<3
+sounddevice>=0.5.1,<1
+PyAudioWPatch>=0.2.12.8,<1
+requests>=2.32,<3
+websocket-client>=1.8,<2
+pynput>=1.7.7,<2
+keyring>=25.5,<26
