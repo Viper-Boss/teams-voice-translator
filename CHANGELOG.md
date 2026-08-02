@@ -17,4 +17,8 @@
 - SRT、TXT、WebVTT、Markdown 与 JSONL 字幕导出。
 - Windows x64 便携发行包。
 
+### 修复
+
+- 保证连续启动的字幕缓存文件名唯一，避免 Windows 低精度系统时钟下偶发覆盖或无法恢复。
+
 [1.0.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.0.0

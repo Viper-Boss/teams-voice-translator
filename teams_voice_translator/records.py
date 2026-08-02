@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import time
+import uuid
 
 
 def default_output_directory() -> Path:
@@ -40,7 +41,8 @@ class SubtitleSession:
         stamp = self.started_wall.strftime("%Y%m%d_%H%M%S_%f")
         cache_directory = cache_directory or Path(tempfile.gettempdir()) / "TeamsVoiceTranslator" / "captions"
         cache_directory.mkdir(parents=True, exist_ok=True)
-        self.cache_path = cache_directory / f"caption_cache_{stamp}.jsonl"
+        unique = uuid.uuid4().hex[:8]
+        self.cache_path = cache_directory / f"caption_cache_{stamp}_{unique}.jsonl"
 
     def add(self, chinese: str, english: str, source: str = "") -> SubtitleRecord:
         record = SubtitleRecord(

@@ -82,6 +82,13 @@ class RecordTests(unittest.TestCase):
             self.assertEqual(recovered.import_cache(old.cache_path), 1)
             self.assertEqual(recovered.records[0].english, "Hello, Professor.")
 
+    def test_cache_paths_are_unique_for_back_to_back_sessions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = SubtitleSession(root)
+            second = SubtitleSession(root)
+            self.assertNotEqual(first.cache_path, second.cache_path)
+
 
 if __name__ == "__main__":
     unittest.main()
