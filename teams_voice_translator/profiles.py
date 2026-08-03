@@ -6,10 +6,13 @@ from typing import Any
 
 
 PROFILE_FIELDS = (
+    "translation_engine",
     "translation_domain",
     "translation_terms",
     "translation_memories",
     "translation_style",
+    "live_voice_clone_mode",
+    "live_voice",
     "tts_instruction",
     "voice",
 )
