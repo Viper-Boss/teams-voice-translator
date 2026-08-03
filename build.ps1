@@ -7,7 +7,7 @@ if (-not (Test-Path $Python)) {
 & $Python -m pip install --only-binary=:all: -i https://pypi.tuna.tsinghua.edu.cn/simple -r (Join-Path $ProjectDir "requirements-build.txt")
 Push-Location $ProjectDir
 try {
-    & $Python -m PyInstaller --noconfirm --clean --windowed --name TeamsVoiceTranslator --collect-all keyring --collect-all pynput --collect-all pyaudiowpatch main.py
+    & $Python -m PyInstaller --noconfirm --clean (Join-Path $ProjectDir "TeamsVoiceTranslator.spec")
 } finally {
     Pop-Location
 }

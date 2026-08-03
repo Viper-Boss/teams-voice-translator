@@ -2,6 +2,27 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-08-03
+
+### 新增
+
+- 创建固定音色时可直接选择本地录音，不再要求用户手工准备公网 URL。
+- 原生支持选择 iPhone `M4A`，并兼容 MP3、WAV、AAC、CAF、FLAC、OGG、OPUS、WMA 与 MP4。
+- 内置 FFmpeg 自动把本地样音裁剪并转换为 24 kHz、单声道、16-bit PCM WAV，无需用户安装转换软件。
+- 新增一次性 OSS 设置窗口；程序自动上传到私有 Bucket、生成 15 分钟签名 URL，并在复刻完成后立即删除临时样音。
+- 百炼 API Key、OSS AccessKey ID 和 Secret 均使用 Windows 凭据管理器保存。
+
+### 改进
+
+- 小于 5 秒、空文件、超大文件或不支持的音频会在上传前给出清晰提示。
+- OSS 删除失败时会显示临时对象完整路径，避免静默遗留含个人音色的文件。
+- 固定 LiveTranslate 音色创建成功后继续自动填入 `voice_id`、切换固定音色并保存。
+
+### 验证
+
+- 新增 iPhone M4A 实际转码、WAV 参数、过短样音拒绝、OSS 上传/签名/删除和凭据隔离测试。
+- 单元测试扩展到 30 项，并继续执行 Windows 离屏界面与 PyInstaller 打包验证。
+
 ## [1.1.0] - 2026-08-03
 
 ### 新增
@@ -42,5 +63,6 @@
 
 - 保证连续启动的字幕缓存文件名唯一，避免 Windows 低精度系统时钟下偶发覆盖或无法恢复。
 
+[1.2.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.0.0
