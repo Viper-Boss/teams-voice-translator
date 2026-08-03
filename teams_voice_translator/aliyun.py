@@ -144,7 +144,14 @@ class BailianClient:
             proxies=self.proxies,
         )
         if not response.ok:
-            raise ApiError(_extract_api_error(response))
+            detail = _extract_api_error(response)
+            if "Engine return error code: 431" in detail and settings["voice"].strip():
+                detail = self._explain_cloned_voice_error(
+                    detail,
+                    voice_id=settings["voice"].strip(),
+                    model=settings["tts_model"],
+                )
+            raise ApiError(detail)
         total = 0
         for raw_line in response.iter_lines(decode_unicode=True):
             if cancel_event.is_set():
@@ -234,6 +241,84 @@ class BailianClient:
         if not voice_id:
             raise ApiError(f"创建音色失败：{result}")
         return voice_id
+
+    def query_voice(self, voice_id: str) -> dict[str, Any]:
+        response = requests.post(
+            f"{self.root}/api/v1/services/audio/tts/customization",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "voice-enrollment",
+                "input": {"action": "query_voice", "voice_id": voice_id.strip()},
+            },
+            timeout=self.timeout,
+            proxies=self.proxies,
+        )
+        if not response.ok:
+            raise ApiError(_extract_api_error(response))
+        output = response.json().get("output") or {}
+        if not isinstance(output, dict):
+            raise ApiError("查询音色状态时，百炼返回了异常数据")
+        return output
+
+    def wait_for_voice_ready(
+        self,
+        voice_id: str,
+        *,
+        timeout: float = 120.0,
+        poll_interval: float = 2.0,
+        on_status: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        while True:
+            detail = self.query_voice(voice_id)
+            status = str(detail.get("status", "")).upper()
+            if status == "OK":
+                return detail
+            if status == "UNDEPLOYED":
+                raise ApiError(
+                    "百炼未通过该复刻音色的处理/审核（UNDEPLOYED）。"
+                    "请换一段 10–20 秒、无背景声且只有你本人说话的清晰录音后重新创建。"
+                )
+            if on_status is not None:
+                on_status("音色已提交 · 正在等待百炼处理完成（DEPLOYING）…")
+            if time.monotonic() >= deadline:
+                raise ApiError(
+                    "音色仍在百炼处理中（DEPLOYING），暂时不能合成。"
+                    "为避免处理失败，OSS 临时样音会先保留；稍后可重新查询或创建。"
+                )
+            time.sleep(poll_interval)
+
+    def _explain_cloned_voice_error(self, original: str, *, voice_id: str, model: str) -> str:
+        if not voice_id.startswith(("qwen-audio-", "cosyvoice-")):
+            return original
+        try:
+            detail = self.query_voice(voice_id)
+        except Exception:
+            return original
+        status = str(detail.get("status", "")).upper()
+        target_model = str(detail.get("target_model", "")).strip()
+        if status == "DEPLOYING":
+            return (
+                "复刻音色仍在百炼处理中（DEPLOYING），目前不能发声。"
+                "请稍等一会再试；新版本创建音色时会自动等到可用。"
+            )
+        if status == "UNDEPLOYED":
+            return (
+                "复刻音色处理失败或未通过审核（UNDEPLOYED），所以语音合成返回 431。"
+                "请使用 10–20 秒、安静环境、只有你本人连续说话的样音重新创建。"
+            )
+        if target_model and target_model != model:
+            return (
+                f"复刻音色绑定的是 {target_model}，当前语音合成模型却是 {model}。"
+                "两者必须完全一致，请切换模型或重新创建对应音色。"
+            )
+        if status == "OK":
+            return (
+                "该复刻音色状态为 OK，但百炼合成引擎仍返回 431。"
+                "请先把音色切换为系统音色 loongjohn 验证；若系统音色可用，"
+                "请用新版重新创建一次克隆音色。"
+            )
+        return original
 
 
 class QwenRealtimeASR:

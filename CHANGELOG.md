@@ -2,6 +2,24 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.4] - 2026-08-03
+
+### 修复
+
+- 修复克隆接口返回 `voice_id` 后立即删除 OSS 样音、导致音色仍在部署时出现 TTS `431` 的问题；现在会等待百炼状态变为 `OK` 后再交付和清理样音。
+- TTS 遇到 `431` 时会查询音色状态，并明确区分仍在处理、处理失败、模型不匹配和状态正常但引擎拒绝。
+- 设置页滚动时，下拉框和数值框不再被鼠标滚轮误改。
+- 自定义 F5/F8/F9 等快捷键后，会议首页按钮、提示文字和停止键会立即同步；保存后全局热键监听也会重启并生效。
+
+### 界面
+
+- “保存全部设置”移到设置页右上角，并增加并列的“编辑术语与提示词”入口。
+- 使用传统流水线时仍可预先编辑直译模型和声音复刻配置，不再显示成无法点击。
+
+### 验证
+
+- 新增克隆音色部署、拒绝和模型不匹配测试；共 37 项单元测试通过，并完成 Windows 离屏界面检查。
+
 ## [1.2.3] - 2026-08-03
 
 ### 新增
@@ -105,6 +123,7 @@
 - 保证连续启动的字幕缓存文件名唯一，避免 Windows 低精度系统时钟下偶发覆盖或无法恢复。
 
 [1.2.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.2.0
+[1.2.4]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.2.4
 [1.2.3]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.2.3
 [1.1.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.0.0
