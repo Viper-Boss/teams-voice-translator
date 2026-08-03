@@ -102,6 +102,27 @@ class HoldButton(QPushButton):
         super().mouseReleaseEvent(event)
 
 
+class ScrollSafeComboBox(QComboBox):
+    """Let the settings page scroll without changing a hovered selection."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
+class ScrollSafeSpinBox(QSpinBox):
+    """Ignore wheel edits; values remain editable with click/keyboard."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
+class ScrollSafeDoubleSpinBox(QDoubleSpinBox):
+    """Ignore wheel edits; values remain editable with click/keyboard."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
 class SendTextEdit(QPlainTextEdit):
     send_requested = Signal()
 
@@ -637,7 +658,7 @@ class MainWindow(QMainWindow):
         self.start_hotkeys()
         self.setWindowTitle(f"Teams 双向课堂翻译 v{__version__}")
         self.resize(1280, 790)
-        self._set_status("就绪 · F8 原声 / F9 翻译")
+        self._set_status(self._ready_status())
         QTimer.singleShot(300, self.offer_cache_recovery)
         if self.settings.get("auto_start_teacher_caption"):
             QTimer.singleShot(700, self.start_teacher_caption)
@@ -702,7 +723,7 @@ class MainWindow(QMainWindow):
         self.typed_input.setPlaceholderText("输入中文后按 Enter 发送；Ctrl+Enter 换行…")
         typed_layout.addWidget(self.typed_input, 4)
         typed_actions = QVBoxLayout()
-        self.typed_mode = QComboBox()
+        self.typed_mode = ScrollSafeComboBox()
         self.typed_mode.addItem("中文翻译成英文后发送", "translate")
         self.typed_mode.addItem("按输入原文直接朗读", "direct")
         self.typed_send_button = QPushButton("发送文字语音  Enter")
@@ -739,11 +760,11 @@ class MainWindow(QMainWindow):
         utility = QHBoxLayout()
         self.record_button = QPushButton("● 开始录音")
         self.record_button.setObjectName("recordButton")
-        self.subtitle_display_mode_quick = QComboBox()
+        self.subtitle_display_mode_quick = ScrollSafeComboBox()
         self.subtitle_display_mode_quick.addItem("字幕：中英双语", "both")
         self.subtitle_display_mode_quick.addItem("字幕：仅中文", "zh")
         self.subtitle_display_mode_quick.addItem("字幕：仅英文", "en")
-        self.profile_quick = QComboBox()
+        self.profile_quick = ScrollSafeComboBox()
         self.profile_quick.addItem("课程：默认", "")
         for profile_name in self.profile_store.names():
             self.profile_quick.addItem(f"课程：{profile_name}", profile_name)
@@ -784,6 +805,14 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         outer = QVBoxLayout(tab)
         outer.setContentsMargins(0, 0, 0, 0)
+        top_actions = QHBoxLayout()
+        top_actions.addStretch()
+        self.top_glossary_button = QPushButton("编辑术语与提示词")
+        self.save_button = QPushButton("保存全部设置")
+        self.save_button.setObjectName("primaryButton")
+        top_actions.addWidget(self.top_glossary_button)
+        top_actions.addWidget(self.save_button)
+        outer.addLayout(top_actions)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -813,12 +842,12 @@ class MainWindow(QMainWindow):
 
         audio_group = QGroupBox("2. 音频设备")
         audio_form = QFormLayout(audio_group)
-        self.input_device = QComboBox()
-        self.teams_output_device = QComboBox()
-        self.loopback_device = QComboBox()
+        self.input_device = ScrollSafeComboBox()
+        self.teams_output_device = ScrollSafeComboBox()
+        self.loopback_device = ScrollSafeComboBox()
         self.monitor_enabled = QCheckBox("同时在本机扬声器试听翻译后的英文")
-        self.monitor_output_device = QComboBox()
-        self.direct_sample_rate = QComboBox()
+        self.monitor_output_device = ScrollSafeComboBox()
+        self.direct_sample_rate = ScrollSafeComboBox()
         for rate in (44100, 48000):
             self.direct_sample_rate.addItem(f"{rate} Hz", rate)
         self.refresh_devices_button = QPushButton("刷新设备列表")
@@ -841,16 +870,16 @@ class MainWindow(QMainWindow):
 
         live_group = QGroupBox("3. F9 极速语音直译 · 中文语音直接生成英文字幕和语音")
         live_form = QFormLayout(live_group)
-        self.translation_engine = QComboBox()
+        self.translation_engine = ScrollSafeComboBox()
         self.translation_engine.addItem("极速直译（推荐，单模型低延迟）", "live")
         self.translation_engine.addItem("传统流水线（ASR → Qwen-MT → TTS）", "classic")
-        self.live_translate_model = QComboBox()
+        self.live_translate_model = ScrollSafeComboBox()
         self.live_translate_model.setEditable(True)
         self.live_translate_model.addItems([
             "qwen3.5-livetranslate-flash-realtime",
             "qwen3.5-livetranslate-flash-realtime-2026-05-19",
         ])
-        self.live_voice_clone_mode = QComboBox()
+        self.live_voice_clone_mode = ScrollSafeComboBox()
         self.live_voice_clone_mode.addItem("服务端复刻一次（推荐，首句校准）", "once")
         self.live_voice_clone_mode.addItem("不复刻，使用默认音色（最快）", "default")
         self.live_voice_clone_mode.addItem("每轮动态复刻（多人场景）", "always")
@@ -883,19 +912,19 @@ class MainWindow(QMainWindow):
 
         asr_group = QGroupBox("4. 字幕、F8 与传统模式实时语音识别")
         asr_form = QFormLayout(asr_group)
-        self.asr_model = QComboBox()
+        self.asr_model = ScrollSafeComboBox()
         self.asr_model.addItems([
             "qwen3-asr-flash-realtime",
             "qwen3-asr-flash-realtime-2026-02-10",
         ])
-        self.asr_language = QComboBox()
+        self.asr_language = ScrollSafeComboBox()
         self.asr_language.addItem("中文（普通话/四川话/闽南语/吴语）", "zh")
         self.asr_language.addItem("粤语", "yue")
-        self.vad_threshold = QDoubleSpinBox()
+        self.vad_threshold = ScrollSafeDoubleSpinBox()
         self.vad_threshold.setRange(0.0, 1.0)
         self.vad_threshold.setSingleStep(0.05)
         self.vad_threshold.setDecimals(2)
-        self.vad_silence_ms = QSpinBox()
+        self.vad_silence_ms = ScrollSafeSpinBox()
         self.vad_silence_ms.setRange(200, 2000)
         self.vad_silence_ms.setSingleStep(100)
         self.vad_silence_ms.setSuffix(" ms")
@@ -916,9 +945,9 @@ class MainWindow(QMainWindow):
 
         mt_group = QGroupBox("5. 字幕、键盘输入与传统模式机器翻译")
         mt_form = QFormLayout(mt_group)
-        self.translation_model = QComboBox()
+        self.translation_model = ScrollSafeComboBox()
         self.translation_model.addItems(["qwen-mt-flash", "qwen-mt-plus", "qwen-mt-turbo", "qwen-mt-lite"])
-        self.summary_model = QComboBox()
+        self.summary_model = ScrollSafeComboBox()
         self.summary_model.setEditable(True)
         self.summary_model.addItems(["qwen-plus", "qwen-max", "qwen-flash"])
         self.translation_domain = QLineEdit()
@@ -928,10 +957,10 @@ class MainWindow(QMainWindow):
         self.translation_memories = QPlainTextEdit()
         self.translation_memories.setMaximumHeight(65)
         self.translation_memories.setPlaceholderText('[{"source":"老师您好","target":"Hello, Professor."}]')
-        self.speak_mode = QComboBox()
+        self.speak_mode = ScrollSafeComboBox()
         self.speak_mode.addItem("立即翻译并发送（最快）", "auto")
         self.speak_mode.addItem("先确认/编辑，再手动发送（稳妥）", "confirm")
-        self.translation_style = QComboBox()
+        self.translation_style = ScrollSafeComboBox()
         self.translation_style.addItem("自然礼貌课堂英语", "polite")
         self.translation_style.addItem("简洁日常口语", "concise")
         self.translation_style.addItem("正式学术表达", "academic")
@@ -951,7 +980,7 @@ class MainWindow(QMainWindow):
 
         tts_group = QGroupBox("6. 键盘输入与传统模式语音合成")
         tts_form = QFormLayout(tts_group)
-        self.tts_model = QComboBox()
+        self.tts_model = ScrollSafeComboBox()
         self.tts_model.addItems(["qwen-audio-3.0-tts-flash", "qwen-audio-3.0-tts-plus"])
         self.voice = QLineEdit()
         self.voice.setPlaceholderText("克隆 voice_id，或系统音色如 loongjohn")
@@ -959,17 +988,17 @@ class MainWindow(QMainWindow):
         voice_row.addWidget(self.voice)
         self.clone_voice_button = QPushButton("创建克隆音色")
         voice_row.addWidget(self.clone_voice_button)
-        self.tts_volume = QSpinBox()
+        self.tts_volume = ScrollSafeSpinBox()
         self.tts_volume.setRange(0, 100)
-        self.tts_rate = QDoubleSpinBox()
+        self.tts_rate = ScrollSafeDoubleSpinBox()
         self.tts_rate.setRange(0.5, 2.0)
         self.tts_rate.setSingleStep(0.05)
-        self.tts_pitch = QDoubleSpinBox()
+        self.tts_pitch = ScrollSafeDoubleSpinBox()
         self.tts_pitch.setRange(0.5, 2.0)
         self.tts_pitch.setSingleStep(0.05)
-        self.tts_seed = QSpinBox()
+        self.tts_seed = ScrollSafeSpinBox()
         self.tts_seed.setRange(0, 65535)
-        self.tts_emotion = QComboBox()
+        self.tts_emotion = ScrollSafeComboBox()
         for label, value in [
             ("自然（无标签）", ""),
             ("悲伤 [sad]", "[sad]"),
@@ -995,13 +1024,13 @@ class MainWindow(QMainWindow):
 
         hotkey_group = QGroupBox("7. 快捷键与网络")
         hotkey_form = QFormLayout(hotkey_group)
-        self.direct_hotkey = QComboBox()
-        self.translate_hotkey = QComboBox()
-        self.cancel_hotkey = QComboBox()
+        self.direct_hotkey = ScrollSafeComboBox()
+        self.translate_hotkey = ScrollSafeComboBox()
+        self.cancel_hotkey = ScrollSafeComboBox()
         for box in (self.direct_hotkey, self.translate_hotkey):
             box.addItems([f"f{i}" for i in range(1, 13)])
         self.cancel_hotkey.addItems(["esc"] + [f"f{i}" for i in range(1, 13)])
-        self.request_timeout = QSpinBox()
+        self.request_timeout = ScrollSafeSpinBox()
         self.request_timeout.setRange(10, 180)
         self.request_timeout.setSuffix(" 秒")
         self.http_proxy = QLineEdit()
@@ -1019,19 +1048,19 @@ class MainWindow(QMainWindow):
         overlay_form = QFormLayout(overlay_group)
         self.overlay_enabled = QCheckBox("启用悬浮字幕（仅在本机显示）")
         self.overlay_always_on_top = QCheckBox("始终置顶")
-        self.overlay_opacity = QSpinBox()
+        self.overlay_opacity = ScrollSafeSpinBox()
         self.overlay_opacity.setRange(20, 100)
         self.overlay_opacity.setSuffix(" %")
-        self.overlay_chinese_font_size = QSpinBox()
+        self.overlay_chinese_font_size = ScrollSafeSpinBox()
         self.overlay_chinese_font_size.setRange(14, 64)
         self.overlay_chinese_font_size.setSuffix(" px")
-        self.overlay_english_font_size = QSpinBox()
+        self.overlay_english_font_size = ScrollSafeSpinBox()
         self.overlay_english_font_size.setRange(12, 56)
         self.overlay_english_font_size.setSuffix(" px")
-        self.overlay_width = QSpinBox()
+        self.overlay_width = ScrollSafeSpinBox()
         self.overlay_width.setRange(420, 1800)
         self.overlay_width.setSuffix(" px")
-        self.overlay_height = QSpinBox()
+        self.overlay_height = ScrollSafeSpinBox()
         self.overlay_height.setRange(90, 500)
         self.overlay_height.setSuffix(" px")
         overlay_form.addRow("显示", self.overlay_enabled)
@@ -1067,10 +1096,10 @@ class MainWindow(QMainWindow):
 
         appearance_group = QGroupBox("9. 外观与实时字幕显示")
         appearance_form = QFormLayout(appearance_group)
-        self.theme = QComboBox()
+        self.theme = ScrollSafeComboBox()
         self.theme.addItem("浅色界面", "light")
         self.theme.addItem("深色黑色界面", "dark")
-        self.subtitle_display_mode = QComboBox()
+        self.subtitle_display_mode = ScrollSafeComboBox()
         self.subtitle_display_mode.addItem("中英双语", "both")
         self.subtitle_display_mode.addItem("仅中文", "zh")
         self.subtitle_display_mode.addItem("仅英文", "en")
@@ -1084,7 +1113,7 @@ class MainWindow(QMainWindow):
 
         profile_group = QGroupBox("10. 课程配置")
         profile_form = QFormLayout(profile_group)
-        self.profile_name = QComboBox()
+        self.profile_name = ScrollSafeComboBox()
         self.profile_name.setEditable(True)
         self.profile_name.addItem("")
         self.profile_name.addItems(self.profile_store.names())
@@ -1104,8 +1133,6 @@ class MainWindow(QMainWindow):
         grid.addWidget(profile_group, 6, 0, 1, 2)
         layout.addLayout(grid)
         actions = QHBoxLayout()
-        self.save_button = QPushButton("保存全部设置")
-        self.save_button.setObjectName("primaryButton")
         official = QPushButton("打开极速直译官方文档")
         official.clicked.connect(
             lambda: QDesktopServices.openUrl(
@@ -1114,7 +1141,6 @@ class MainWindow(QMainWindow):
         )
         vb_cable = QPushButton("打开 VB-CABLE 官网")
         vb_cable.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://vb-audio.com/Cable/")))
-        actions.addWidget(self.save_button)
         actions.addWidget(official)
         actions.addWidget(vb_cable)
         actions.addStretch()
@@ -1172,8 +1198,12 @@ class MainWindow(QMainWindow):
         )
         self.translation_engine.currentIndexChanged.connect(self.update_translation_engine_ui)
         self.live_voice_clone_mode.currentIndexChanged.connect(self.update_translation_engine_ui)
+        self.direct_hotkey.currentTextChanged.connect(self.update_translation_engine_ui)
+        self.translate_hotkey.currentTextChanged.connect(self.update_translation_engine_ui)
+        self.cancel_hotkey.currentTextChanged.connect(self.update_translation_engine_ui)
         self.continuous_f9_toggle.toggled.connect(self.on_continuous_f9_setting_changed)
         self.glossary_button.clicked.connect(self.open_glossary_dialog)
+        self.top_glossary_button.clicked.connect(self.open_glossary_dialog)
         self.profile_load_button.clicked.connect(self.load_selected_profile)
         self.profile_save_button.clicked.connect(self.save_selected_profile)
         self.profile_delete_button.clicked.connect(self.delete_selected_profile)
@@ -1340,7 +1370,7 @@ class MainWindow(QMainWindow):
 
     def update_translation_engine_ui(self, *_args) -> None:
         live = self.translation_engine.currentData() == "live"
-        fixed_voice = live and self.live_voice_clone_mode.currentData() == "fixed"
+        fixed_voice = self.live_voice_clone_mode.currentData() == "fixed"
         continuous = live and self.continuous_f9_toggle.isChecked()
         if live:
             self._select_data(self.speak_mode, "auto")
@@ -1348,20 +1378,52 @@ class MainWindow(QMainWindow):
         self.speak_mode.setToolTip(
             "极速模式会边生成边播放，因此固定为自动发送。" if live else ""
         )
+        direct_key = self.direct_hotkey.currentText().upper()
+        translate_key = self.translate_hotkey.currentText().upper()
+        cancel_key = self.cancel_hotkey.currentText().upper()
+        self.direct_button.setText(f"按住直接说话\n{direct_key}")
         self.translate_button.setText(
-            "开启/关闭持续翻译\nF9"
+            f"开启/关闭持续翻译\n{translate_key}"
             if continuous
-            else ("按住极速翻译说话\nF9" if live else "按住传统翻译说话\nF9")
+            else (
+                f"按住极速翻译说话\n{translate_key}"
+                if live
+                else f"按住传统翻译说话\n{translate_key}"
+            )
+        )
+        self.continuous_f9_toggle.setText(
+            f"{translate_key} 持续翻译\n按一次开启/关闭"
+        )
+        self.stop_button.setText(f"停止 / 取消  {cancel_key}")
+        self.chinese_text.setPlaceholderText(
+            f"按住 {translate_key}，或开启持续翻译后直接说中文…"
+        )
+        self.english_text.setPlaceholderText(
+            f"松开 {translate_key} 后，英文译文会显示在这里…"
         )
         self.continuous_f9_toggle.setEnabled(live)
-        for control in (
-            self.live_translate_model,
-            self.live_voice_clone_mode,
-        ):
-            control.setEnabled(live)
+        self.live_translate_model.setEnabled(True)
+        self.live_voice_clone_mode.setEnabled(True)
+        inactive_hint = "当前使用传统流水线；此项仍可预先配置，切回极速直译后生效。"
+        self.live_translate_model.setToolTip("" if live else inactive_hint)
+        self.live_voice_clone_mode.setToolTip("" if live else inactive_hint)
         self.live_voice.setEnabled(fixed_voice)
         self.clone_live_voice_button.setVisible(fixed_voice)
         self.clone_live_voice_button.setEnabled(fixed_voice)
+
+    def _hotkey_name(self, setting: str) -> str:
+        control = {
+            "direct_hotkey": self.direct_hotkey,
+            "translate_hotkey": self.translate_hotkey,
+            "cancel_hotkey": self.cancel_hotkey,
+        }[setting]
+        return control.currentText().upper()
+
+    def _ready_status(self) -> str:
+        return (
+            f"就绪 · {self._hotkey_name('direct_hotkey')} 原声 / "
+            f"{self._hotkey_name('translate_hotkey')} 翻译"
+        )
 
     def apply_overlay_settings(self, *_args) -> None:
         if not hasattr(self, "overlay"):
@@ -1842,6 +1904,7 @@ class MainWindow(QMainWindow):
             self.apply_subtitle_display_mode()
             self.apply_theme()
             self.start_hotkeys()
+            self.update_translation_engine_ui()
             self._set_status("设置已保存")
         except Exception as exc:
             self.show_error(f"保存失败：{exc}")
@@ -2261,7 +2324,7 @@ class MainWindow(QMainWindow):
             self._set_status("原声已发送 · 正在整理字幕并翻译…")
         else:
             self._set_idle()
-            self._set_status("就绪 · F8 原声 / F9 翻译")
+            self._set_status(self._ready_status())
 
     def _direct_caption_worker(self, values: dict[str, Any], started_at: float) -> None:
         asr: QwenRealtimeASR | None = None
@@ -2302,7 +2365,7 @@ class MainWindow(QMainWindow):
                 chinese,
                 english,
                 time.perf_counter() - started_at,
-                "我 / F8 原声",
+                f"我 / {str(values['direct_hotkey']).upper()} 原声",
             )
             message = "原声已发送 · 中文和英文字幕已生成"
         except Exception as exc:
@@ -2324,7 +2387,9 @@ class MainWindow(QMainWindow):
         values = self.current_settings()
         if values.get("translation_engine") != "live":
             self.tabs.setCurrentWidget(self.settings_tab)
-            self.show_error("F9 持续翻译仅支持“极速直译”引擎。")
+            self.show_error(
+                f"{self._hotkey_name('translate_hotkey')} 持续翻译仅支持“极速直译”引擎。"
+            )
             return
         if not self.settings.get_api_key() or not values["workspace_id"]:
             self.tabs.setCurrentWidget(self.settings_tab)
@@ -2844,7 +2909,10 @@ class MainWindow(QMainWindow):
         if self.teacher_active:
             self.stop_teacher_caption()
         self._set_idle()
-        self._set_status("已停止 · F8 原声 / F9 翻译")
+        self._set_status(
+            f"已停止 · {self._hotkey_name('direct_hotkey')} 原声 / "
+            f"{self._hotkey_name('translate_hotkey')} 翻译"
+        )
 
     def update_asr_preview(self, text: str, emotion: str) -> None:
         self.chinese_text.setPlainText(text)
@@ -2893,7 +2961,7 @@ class MainWindow(QMainWindow):
             elif self.teacher_active:
                 self._set_status("正在听老师 · F8/F9 仍可随时使用")
             else:
-                self._set_status("就绪 · F8 原声 / F9 翻译")
+                self._set_status(self._ready_status())
 
     def clear_text(self) -> None:
         self.awaiting_confirmation = False
@@ -2993,10 +3061,12 @@ class MainWindow(QMainWindow):
             uploaded: UploadedVoiceSample | None = None
             cleanup_warning = ""
             voice_id = ""
+            preserve_upload = False
             error = ""
             try:
                 request_options = dict(options)
                 local_path = str(request_options.pop("audio_path", "") or "").strip()
+                client = self._make_client(values)
                 if local_path:
                     self.signals.status.emit("正在把本地样音转换为标准 WAV…")
                     with normalized_voice_sample(
@@ -3009,13 +3079,20 @@ class MainWindow(QMainWindow):
                         uploaded = uploader.upload(normalized_path)
                         request_options["audio_url"] = uploaded.signed_url
                         self.signals.status.emit("临时样音已上传 · 正在通过百炼创建固定音色…")
-                        voice_id = self._make_client(values).clone_voice(**request_options)
+                        voice_id = client.clone_voice(**request_options)
                 else:
-                    voice_id = self._make_client(values).clone_voice(**request_options)
+                    voice_id = client.clone_voice(**request_options)
+                if voice_id.startswith(("qwen-audio-", "cosyvoice-")):
+                    client.wait_for_voice_ready(
+                        voice_id,
+                        timeout=120.0,
+                        on_status=self.signals.status.emit,
+                    )
             except Exception as exc:
                 error = str(exc)
+                preserve_upload = bool(voice_id and "DEPLOYING" in error)
             finally:
-                if uploader is not None and uploaded is not None:
+                if uploader is not None and uploaded is not None and not preserve_upload:
                     try:
                         uploader.delete(uploaded.key)
                     except Exception as exc:
@@ -3024,6 +3101,11 @@ class MainWindow(QMainWindow):
                             "OSS 临时样音删除失败，请手动删除对象："
                             f"{uploaded.key}\n错误：{exc}"
                         )
+                elif uploader is not None and uploaded is not None:
+                    cleanup_warning = (
+                        "音色尚未确认可用，程序为避免中断百炼处理，已保留 OSS 临时样音："
+                        f"{uploaded.key}。确认音色状态后可手动删除。"
+                    )
             self.signals.clone_finished.emit(not bool(error), voice_id if not error else error, cleanup_warning)
 
         threading.Thread(target=worker, name="voice-clone", daemon=True).start()
