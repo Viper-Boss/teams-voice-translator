@@ -60,9 +60,30 @@ class PayloadTests(unittest.TestCase):
             target_model="qwen-audio-3.0-tts-flash",
             prefix="myvoice",
             audio_url="https://example.com/a.wav",
+            preprocess=True,
         )
         self.assertEqual(payload["model"], "voice-enrollment")
         self.assertEqual(payload["input"]["action"], "create_voice")
+        self.assertTrue(payload["input"]["enable_preprocess"])
+
+    def test_live_translate_voice_clone_omits_unsupported_preprocess_fields(self):
+        payload = build_voice_clone_payload(
+            target_model="qwen3.5-livetranslate-flash-realtime",
+            prefix="myvoice",
+            audio_url="https://example.com/a.wav",
+            language="zh",
+            max_seconds=30,
+            preprocess=True,
+        )
+        self.assertEqual(
+            payload["input"],
+            {
+                "action": "create_voice",
+                "target_model": "qwen3.5-livetranslate-flash-realtime",
+                "prefix": "myvoice",
+                "url": "https://example.com/a.wav",
+            },
+        )
 
 
 if __name__ == "__main__":

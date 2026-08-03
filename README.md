@@ -1,4 +1,4 @@
-# Teams 双向课堂翻译 v1.2.0
+# Teams 双向课堂翻译 v1.2.1
 
 [![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
@@ -10,7 +10,7 @@
 ## 下载
 
 - [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.2.0 更新记录](CHANGELOG.md#120---2026-08-03)
+- [查看 v1.2.1 更新记录](CHANGELOG.md#121---2026-08-03)
 - [快速开始](快速开始.txt)
 
 发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
