@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QCloseEvent, QDesktopServices
@@ -55,9 +55,11 @@ from .audio import (
 from .config import SettingsStore
 from .hotkeys import HoldHotkeys
 from .live_translate import QwenLiveTranslate
+from .oss_upload import OssTemporaryUploader, UploadedVoiceSample
 from .records import SubtitleSession, default_output_directory
 from .profiles import CourseProfileStore
 from .api_payloads import parse_json_list
+from .voice_sample import SUPPORTED_AUDIO_SUFFIXES, normalized_voice_sample
 from . import __version__
 
 
@@ -80,7 +82,7 @@ class UiSignals(QObject):
     teacher_finished = Signal(str)
     tts_finished = Signal()
     test_finished = Signal(bool, str)
-    clone_finished = Signal(bool, str)
+    clone_finished = Signal(bool, str, str)
     summary_ready = Signal(bool, str)
 
 
@@ -348,17 +350,114 @@ class MeetingSummaryDialog(QDialog):
         root.addWidget(buttons)
 
 
+class OssSettingsDialog(QDialog):
+    def __init__(self, settings: SettingsStore, parent=None) -> None:
+        super().__init__(parent)
+        self.settings = settings
+        self.setWindowTitle("本地样音临时上传 · 阿里云 OSS")
+        self.resize(650, 360)
+        root = QVBoxLayout(self)
+        note = QLabel(
+            "仅首次配置。请选择一个私有 OSS Bucket；程序把样音转换为 WAV 后临时上传，"
+            "生成 15 分钟签名地址，并在创建音色后立即删除。AccessKey Secret 只保存在 Windows 凭据管理器。"
+        )
+        note.setWordWrap(True)
+        note.setObjectName("hint")
+        root.addWidget(note)
+
+        form = QFormLayout()
+        self.region = QLineEdit(str(settings.get("oss_region", "cn-beijing")))
+        self.region.setPlaceholderText("例如 cn-beijing、cn-hangzhou")
+        self.bucket = QLineEdit(str(settings.get("oss_bucket", "")))
+        self.bucket.setPlaceholderText("已创建的私有 Bucket 名称")
+        self.access_key_id = QLineEdit(settings.get_oss_access_key_id())
+        self.access_key_id.setPlaceholderText("建议使用仅限临时目录的 RAM AccessKey")
+        self.access_key_secret = QLineEdit()
+        self.access_key_secret.setEchoMode(QLineEdit.Password)
+        if settings.get_oss_access_key_secret():
+            self.access_key_secret.setPlaceholderText("已保存；留空表示继续使用")
+        form.addRow("OSS 地域 Region", self.region)
+        form.addRow("Bucket", self.bucket)
+        form.addRow("AccessKey ID", self.access_key_id)
+        form.addRow("AccessKey Secret", self.access_key_secret)
+        root.addLayout(form)
+
+        permission = QLabel(
+            "RAM 最小权限：仅允许该 Bucket 下 teams-voice-translator/temporary/* 的 "
+            "oss:PutObject、oss:GetObject、oss:DeleteObject。请勿填写阿里云主账号 AccessKey。"
+        )
+        permission.setWordWrap(True)
+        permission.setObjectName("hint")
+        root.addWidget(permission)
+
+        links = QHBoxLayout()
+        open_oss = QPushButton("打开阿里云 OSS 控制台")
+        open_oss.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://oss.console.aliyun.com/bucket"))
+        )
+        open_ram = QPushButton("打开 RAM 用户管理")
+        open_ram.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://ram.console.aliyun.com/users"))
+        )
+        links.addWidget(open_oss)
+        links.addWidget(open_ram)
+        links.addStretch()
+        root.addLayout(links)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel | QDialogButtonBox.Save)
+        buttons.button(QDialogButtonBox.Save).setText("保存 OSS 设置")
+        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self.submit)
+        root.addWidget(buttons)
+
+    def submit(self) -> None:
+        region = self.region.text().strip().lower()
+        bucket = self.bucket.text().strip()
+        access_key_id = self.access_key_id.text().strip()
+        secret = self.access_key_secret.text().strip()
+        if not region or not all(char.isalnum() or char == "-" for char in region):
+            QMessageBox.warning(self, "OSS 地域无效", "请填写类似 cn-beijing 的 Region。")
+            return
+        if not bucket or not all(char.isalnum() or char in "-." for char in bucket):
+            QMessageBox.warning(self, "Bucket 无效", "请填写已创建的 OSS Bucket 名称。")
+            return
+        if not access_key_id:
+            QMessageBox.warning(self, "AccessKey 缺失", "请填写 RAM AccessKey ID。")
+            return
+        if not secret and not self.settings.get_oss_access_key_secret():
+            QMessageBox.warning(self, "AccessKey 缺失", "请填写 RAM AccessKey Secret。")
+            return
+        self.settings.update(
+            {
+                "oss_region": region,
+                "oss_bucket": bucket,
+            }
+        )
+        self.settings.set_oss_access_key_id(access_key_id)
+        if secret:
+            self.settings.set_oss_access_key_secret(secret)
+        self.accept()
+
+
 class VoiceCloneDialog(QDialog):
     create_requested = Signal(dict)
 
-    def __init__(self, model: str, parent=None) -> None:
+    def __init__(
+        self,
+        model: str,
+        settings: SettingsStore,
+        configure_oss: Callable[[], bool],
+        parent=None,
+    ) -> None:
         super().__init__(parent)
+        self.settings = settings
+        self.configure_oss = configure_oss
         self.setWindowTitle("创建克隆音色 · 百炼官方接口")
-        self.resize(620, 340)
+        self.resize(720, 430)
         layout = QVBoxLayout(self)
         note = QLabel(
-            "请准备 3–30 秒清晰单人语音，并先上传到可公开访问的 HTTPS 地址（例如 OSS 临时签名 URL）。"
-            "API 不接受本地磁盘路径。样音用中文即可，生成时仍可说英文。"
+            "直接选择 iPhone M4A、MP3、WAV 等本地录音即可。程序会自动裁剪并转换成 "
+            "24 kHz 单声道 16-bit PCM WAV，临时上传到你自己的 OSS，创建音色后立即删除。"
         )
         note.setWordWrap(True)
         note.setObjectName("hint")
@@ -373,27 +472,39 @@ class VoiceCloneDialog(QDialog):
         self.model.setCurrentText(model)
         self.prefix = QLineEdit("myvoice")
         self.url = QLineEdit()
-        self.url.setPlaceholderText("https://.../voice-sample.wav")
+        self.url.setPlaceholderText("选择本地录音；也兼容原有 HTTPS 样音地址")
+        source_row = QHBoxLayout()
+        source_row.addWidget(self.url)
+        choose_file = QPushButton("选择本地录音")
+        choose_file.clicked.connect(self.choose_local_file)
+        source_row.addWidget(choose_file)
+        oss_settings = QPushButton("OSS 设置")
+        oss_settings.clicked.connect(self.open_oss_settings)
+        source_row.addWidget(oss_settings)
         self.language = QComboBox()
         self.language.addItem("中文 zh", "zh")
         self.language.addItem("英语 en", "en")
         self.max_seconds = QDoubleSpinBox()
-        self.max_seconds.setRange(3.0, 30.0)
+        self.max_seconds.setRange(5.0, 30.0)
         self.max_seconds.setValue(20.0)
         self.max_seconds.setSuffix(" 秒")
         self.preprocess = QCheckBox("开启降噪、增强和音量归一化")
         form.addRow("目标模型", self.model)
         form.addRow("音色前缀", self.prefix)
-        form.addRow("样音公网 URL", self.url)
+        form.addRow("样音文件", source_row)
         form.addRow("样音语言", self.language)
         form.addRow("最大取样长度", self.max_seconds)
         form.addRow("样音预处理", self.preprocess)
         layout.addLayout(form)
+        self.oss_status = QLabel()
+        self.oss_status.setObjectName("hint")
+        self.refresh_oss_status()
+        layout.addWidget(self.oss_status)
         links = QHBoxLayout()
         docs = QPushButton("打开声音复刻官方文档")
         docs.clicked.connect(
             lambda: QDesktopServices.openUrl(
-                QUrl("https://help.aliyun.com/zh/model-studio/voice-clone-design-http-api")
+                QUrl("https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide")
             )
         )
         links.addWidget(docs)
@@ -405,15 +516,55 @@ class VoiceCloneDialog(QDialog):
         buttons.accepted.connect(self.submit)
         layout.addWidget(buttons)
 
+    def choose_local_file(self) -> None:
+        formats = " ".join(f"*{suffix}" for suffix in sorted(SUPPORTED_AUDIO_SUFFIXES))
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择用于复刻声音的本地录音",
+            "",
+            f"音频文件 ({formats});;所有文件 (*.*)",
+        )
+        if path:
+            self.url.setText(path)
+
+    def open_oss_settings(self) -> None:
+        self.configure_oss()
+        self.refresh_oss_status()
+
+    def refresh_oss_status(self) -> None:
+        config = self.settings.get_oss_config()
+        if self.settings.has_oss_config():
+            self.oss_status.setText(
+                f"本地样音自动上传已就绪：{config['bucket']} · {config['region']}；上传后自动删除。"
+            )
+        else:
+            self.oss_status.setText("首次选择本地样音前，请点击“OSS 设置”完成一次性配置。")
+
     def submit(self) -> None:
-        if not self.url.text().strip().startswith("https://"):
-            QMessageBox.warning(self, "样音地址无效", "请填写可公开访问的 HTTPS 音频地址。")
+        source = self.url.text().strip()
+        local_path = Path(source).expanduser()
+        if local_path.is_file():
+            if not self.settings.has_oss_config() and not self.configure_oss():
+                return
+            self.refresh_oss_status()
+            audio_path = str(local_path.resolve())
+            audio_url = ""
+        elif source.startswith("https://"):
+            audio_path = ""
+            audio_url = source
+        else:
+            QMessageBox.warning(
+                self,
+                "样音文件无效",
+                "请选择本地录音文件，或填写可公开访问的 HTTPS 音频地址。",
+            )
             return
         self.create_requested.emit(
             {
                 "target_model": self.model.currentText(),
                 "prefix": self.prefix.text().strip(),
-                "audio_url": self.url.text().strip(),
+                "audio_path": audio_path,
+                "audio_url": audio_url,
                 "language": self.language.currentData(),
                 "max_seconds": self.max_seconds.value(),
                 "preprocess": self.preprocess.isChecked(),
@@ -2436,27 +2587,68 @@ class MainWindow(QMainWindow):
     def open_clone_dialog(self, model: str | None = None) -> None:
         self.save_settings_from_ui()
         self.clone_target_model = model or self.tts_model.currentText()
-        self.clone_dialog = VoiceCloneDialog(self.clone_target_model, self)
+        self.clone_dialog = VoiceCloneDialog(
+            self.clone_target_model,
+            self.settings,
+            self.open_oss_settings,
+            self,
+        )
         self.clone_dialog.create_requested.connect(self.create_voice)
         self.clone_dialog.exec()
+
+    def open_oss_settings(self) -> bool:
+        dialog = OssSettingsDialog(self.settings, self)
+        return dialog.exec() == QDialog.Accepted
 
     def create_voice(self, options: dict[str, Any]) -> None:
         assert self.clone_dialog is not None
         for button in self.clone_dialog.findChildren(QPushButton):
             button.setEnabled(False)
-        self._set_status("正在通过百炼创建克隆音色…")
+        self._set_status("正在准备本地样音…" if options.get("audio_path") else "正在通过百炼创建克隆音色…")
         values = self.current_settings()
+        oss_config = self.settings.get_oss_config() if options.get("audio_path") else None
 
         def worker() -> None:
+            uploader: OssTemporaryUploader | None = None
+            uploaded: UploadedVoiceSample | None = None
+            cleanup_warning = ""
+            voice_id = ""
+            error = ""
             try:
-                voice_id = self._make_client(values).clone_voice(**options)
-                self.signals.clone_finished.emit(True, voice_id)
+                request_options = dict(options)
+                local_path = str(request_options.pop("audio_path", "") or "").strip()
+                if local_path:
+                    self.signals.status.emit("正在把本地样音转换为标准 WAV…")
+                    with normalized_voice_sample(
+                        local_path,
+                        max_seconds=float(request_options["max_seconds"]),
+                    ) as normalized_path:
+                        self.signals.status.emit("正在将标准 WAV 临时上传到 OSS…")
+                        assert oss_config is not None
+                        uploader = OssTemporaryUploader(**oss_config)
+                        uploaded = uploader.upload(normalized_path)
+                        request_options["audio_url"] = uploaded.signed_url
+                        self.signals.status.emit("临时样音已上传 · 正在通过百炼创建固定音色…")
+                        voice_id = self._make_client(values).clone_voice(**request_options)
+                else:
+                    voice_id = self._make_client(values).clone_voice(**request_options)
             except Exception as exc:
-                self.signals.clone_finished.emit(False, str(exc))
+                error = str(exc)
+            finally:
+                if uploader is not None and uploaded is not None:
+                    try:
+                        uploader.delete(uploaded.key)
+                    except Exception as exc:
+                        log.warning("Unable to delete temporary OSS voice sample %s: %s", uploaded.key, exc)
+                        cleanup_warning = (
+                            "OSS 临时样音删除失败，请手动删除对象："
+                            f"{uploaded.key}\n错误：{exc}"
+                        )
+            self.signals.clone_finished.emit(not bool(error), voice_id if not error else error, cleanup_warning)
 
         threading.Thread(target=worker, name="voice-clone", daemon=True).start()
 
-    def on_clone_finished(self, ok: bool, message: str) -> None:
+    def on_clone_finished(self, ok: bool, message: str, cleanup_warning: str) -> None:
         if ok:
             if self.clone_target_model.startswith("qwen3.5-livetranslate"):
                 self.live_voice.setText(message)
@@ -2470,12 +2662,21 @@ class MainWindow(QMainWindow):
             self.save_settings_from_ui()
             if self.clone_dialog is not None:
                 self.clone_dialog.accept()
-            QMessageBox.information(self, "克隆音色创建成功", f"voice_id：\n{message}\n\n已自动填入并保存。")
+            detail = f"voice_id：\n{message}\n\n已自动填入并保存。"
+            if cleanup_warning:
+                detail += f"\n\n注意：{cleanup_warning}"
+            (QMessageBox.warning if cleanup_warning else QMessageBox.information)(
+                self,
+                "克隆音色创建成功",
+                detail,
+            )
             self._set_status("克隆音色已创建")
         else:
             if self.clone_dialog is not None:
                 for button in self.clone_dialog.findChildren(QPushButton):
                     button.setEnabled(True)
+            if cleanup_warning:
+                message += f"\n\n{cleanup_warning}"
             QMessageBox.critical(self, "创建音色失败", message)
             self._set_status("创建音色失败")
 

@@ -1,4 +1,4 @@
-# Teams 双向课堂翻译 v1.1.0
+# Teams 双向课堂翻译 v1.2.0
 
 [![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
@@ -10,7 +10,7 @@
 ## 下载
 
 - [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.1.0 更新记录](CHANGELOG.md#110---2026-08-03)
+- [查看 v1.2.0 更新记录](CHANGELOG.md#120---2026-08-03)
 - [快速开始](快速开始.txt)
 
 发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
@@ -28,6 +28,7 @@
 - 双向三轨录音：你的麦克风、老师系统声、双方混合会议各一份 WAV。
 - 完整时间轴：标记“我 / 老师”、中英文、时间和处理耗时，并支持搜索和双击重新载入。
 - 课程配置：按课程保存领域、术语、翻译记忆、表达风格、音色和 TTS 指令。
+- 一键本地声音复刻：直接选择 iPhone `M4A`、MP3、WAV 等录音，自动转换、临时上传、创建固定音色并清理样音。
 - 字幕导出：中文、英文或双语；SRT、TXT、WebVTT、Markdown、JSONL 或全部格式。
 - AI 课堂总结：知识点、老师回答、作业待办、术语和待确认问题。
 - 临时缓存恢复：程序异常退出后可在下次启动时恢复尚未保存的双语字幕。
@@ -56,7 +57,36 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `qwen-mt-flash`、`qwen-audio-3.0-tts-flash`：传统模式、键盘翻译及发声。
 - `qwen-plus`：可选的课堂总结。
 
-极速直译的固定克隆音色必须针对 `qwen3.5-livetranslate-flash-realtime` 单独创建，不能复用普通 TTS 的 `voice_id`。首次使用建议先选择“首次生成时克隆（推荐）”；如要每次保持完全一致，点击“创建直译专属音色”并改为“固定 voice_id”。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+极速直译的固定克隆音色必须针对 `qwen3.5-livetranslate-flash-realtime` 单独创建，不能复用普通 TTS 的 `voice_id`。首次使用建议先选择“服务端复刻一次（推荐）”；如要每次保持完全一致，点击“创建直译专属音色”并改为“固定 voice_id”。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+
+## 一键本地声音复刻
+
+点击“创建直译专属音色”后可以直接选择本地录音，不再需要手工制作公网 URL：
+
+1. 首次使用点击“OSS 设置”，填写私有 Bucket 所在地域、Bucket 名称和 RAM AccessKey。
+2. 选择 iPhone `M4A`、MP3、WAV、AAC、CAF、FLAC、OGG、OPUS、WMA 或 MP4 音频。
+3. 程序自动裁剪为最多 30 秒，并转成 24 kHz、单声道、16-bit PCM WAV。
+4. 标准 WAV 使用随机对象名临时上传到私有 OSS，并生成 15 分钟 HTTPS 签名地址。
+5. 百炼返回固定 `voice_id` 后，程序自动填入并保存，同时立即删除 OSS 临时样音。
+
+阿里云建议使用 10–20 秒样音，至少包含 5 秒连续、清晰、无背景音乐的单人语音。参见[声音复刻官方指南](https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide)。
+
+建议给专用 RAM 用户只授予临时目录所需权限：
+
+```json
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["oss:PutObject", "oss:GetObject", "oss:DeleteObject"],
+      "Resource": ["acs:oss:*:*:你的Bucket/teams-voice-translator/temporary/*"]
+    }
+  ]
+}
+```
+
+Bucket 可以保持私有。AccessKey ID、AccessKey Secret 与百炼 API Key 均保存在 Windows 凭据管理器，不写入 `settings.json`。如果临时对象删除失败，程序会明确显示对象路径，方便手工删除。建议再为 `teams-voice-translator/temporary/` 前缀设置 1 天自动删除的 OSS 生命周期规则，作为电脑断电或程序异常退出时的隐私兜底。
 
 普通配置和日志分别位于：
 
@@ -155,6 +185,7 @@ meeting_mixed_时间.wav    双方混合会议
 - 传统 F9 与双向文本会发送到 Qwen-MT；需要发声时英文会发送到 Qwen-Audio-TTS。
 - 点击课堂总结时，本次双向字幕会发送到所选 Qwen 总结模型。
 - API Key 由 Windows 凭据管理器保存；日志不记录 API Key。
+- 使用本地声音复刻时，标准化后的短样音会临时上传到用户配置的私有 OSS，并通过短时签名 URL 提供给百炼；程序会在请求完成后尝试立即删除。
 - 系统声回环会捕获所选播放设备上的声音，不只 Teams。会议期间不要在同一设备播放其他音频。
 - 本软件不是医疗、法律或专业同传服务；重要内容应人工确认。
 

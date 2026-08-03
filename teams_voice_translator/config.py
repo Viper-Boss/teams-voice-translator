@@ -11,6 +11,8 @@ import keyring
 
 APP_NAME = "TeamsVoiceTranslator"
 KEYRING_SERVICE = "TeamsVoiceTranslator.AlibabaCloud"
+OSS_ACCESS_KEY_ID_USERNAME = "oss_access_key_id"
+OSS_ACCESS_KEY_SECRET_USERNAME = "oss_access_key_secret"
 
 DEFAULTS: dict[str, Any] = {
     "workspace_id": "",
@@ -54,6 +56,8 @@ DEFAULTS: dict[str, Any] = {
     "cancel_hotkey": "esc",
     "request_timeout": 45,
     "http_proxy": "",
+    "oss_region": "cn-beijing",
+    "oss_bucket": "",
     "overlay_enabled": False,
     "overlay_opacity": 82,
     "overlay_always_on_top": True,
@@ -134,3 +138,42 @@ class SettingsStore:
         if not api_key:
             return
         keyring.set_password(KEYRING_SERVICE, "api_key", api_key)
+
+    def get_oss_access_key_id(self) -> str:
+        env_id = os.getenv("OSS_ACCESS_KEY_ID", "").strip()
+        if env_id:
+            return env_id
+        try:
+            return (keyring.get_password(KEYRING_SERVICE, OSS_ACCESS_KEY_ID_USERNAME) or "").strip()
+        except Exception:
+            return ""
+
+    def set_oss_access_key_id(self, access_key_id: str) -> None:
+        access_key_id = access_key_id.strip()
+        if access_key_id:
+            keyring.set_password(KEYRING_SERVICE, OSS_ACCESS_KEY_ID_USERNAME, access_key_id)
+
+    def get_oss_access_key_secret(self) -> str:
+        env_secret = os.getenv("OSS_ACCESS_KEY_SECRET", "").strip()
+        if env_secret:
+            return env_secret
+        try:
+            return (keyring.get_password(KEYRING_SERVICE, OSS_ACCESS_KEY_SECRET_USERNAME) or "").strip()
+        except Exception:
+            return ""
+
+    def set_oss_access_key_secret(self, secret: str) -> None:
+        secret = secret.strip()
+        if secret:
+            keyring.set_password(KEYRING_SERVICE, OSS_ACCESS_KEY_SECRET_USERNAME, secret)
+
+    def get_oss_config(self) -> dict[str, str]:
+        return {
+            "region": str(self.get("oss_region", "cn-beijing")).strip(),
+            "bucket": str(self.get("oss_bucket", "")).strip(),
+            "access_key_id": self.get_oss_access_key_id(),
+            "access_key_secret": self.get_oss_access_key_secret(),
+        }
+
+    def has_oss_config(self) -> bool:
+        return all(self.get_oss_config().values())
