@@ -628,7 +628,7 @@ class MainWindow(QMainWindow):
         self.refresh_audio_devices()
         self.load_settings_into_ui()
         self.start_hotkeys()
-        self.setWindowTitle("Teams 双向课堂翻译")
+        self.setWindowTitle(f"Teams 双向课堂翻译 v{__version__}")
         self.resize(1280, 790)
         self._set_status("就绪 · F8 原声 / F9 翻译")
         QTimer.singleShot(300, self.offer_cache_recovery)
@@ -641,7 +641,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(22, 18, 22, 18)
         header = QHBoxLayout()
         title_box = QVBoxLayout()
-        title = QLabel("Teams 双向课堂翻译")
+        title = QLabel(f"Teams 双向课堂翻译 v{__version__}")
         title.setObjectName("title")
         subtitle = QLabel("你说中文 → 英文克隆音色 · 老师说英文 → 中文字幕 · 双向录音与课堂总结")
         subtitle.setObjectName("subtitle")
@@ -838,15 +838,19 @@ class MainWindow(QMainWindow):
             "qwen3.5-livetranslate-flash-realtime-2026-05-19",
         ])
         self.live_voice_clone_mode = QComboBox()
-        self.live_voice_clone_mode.addItem("服务端复刻一次（推荐）", "once")
+        self.live_voice_clone_mode.addItem("服务端复刻一次（推荐，无需上传样音）", "once")
         self.live_voice_clone_mode.addItem("不复刻，使用默认音色（最快）", "default")
         self.live_voice_clone_mode.addItem("每轮动态复刻（多人场景）", "always")
-        self.live_voice_clone_mode.addItem("使用预先复刻的固定音色", "fixed")
+        self.live_voice_clone_mode.addItem("使用预先复刻的固定音色（高级）", "fixed")
         self.live_voice = QLineEdit()
         self.live_voice.setPlaceholderText("固定 voice_id，例如 qwen-translate-vc-…；其他模式可留空")
         live_voice_row = QHBoxLayout()
         live_voice_row.addWidget(self.live_voice)
-        self.clone_live_voice_button = QPushButton("创建直译专属音色")
+        self.clone_live_voice_button = QPushButton("实验性创建固定音色")
+        self.clone_live_voice_button.setToolTip(
+            "百炼当前可能拒绝为 Qwen3.5 LiveTranslate 预创建固定音色；"
+            "推荐使用“服务端复刻一次”，无需上传样音。"
+        )
         live_voice_row.addWidget(self.clone_live_voice_button)
         live_form.addRow("F9 翻译引擎", self.translation_engine)
         live_form.addRow("直译模型", self.live_translate_model)
@@ -855,7 +859,8 @@ class MainWindow(QMainWindow):
         live_hint = QLabel(
             "极速模式通过一个 WebSocket 直接完成中文识别、英文翻译和英文语音流式输出。"
             "请在 API Key 权限中授权 qwen3.5-livetranslate-flash-realtime。"
-            "固定音色需针对该模型单独创建，不能复用普通 TTS voice_id。"
+            "推荐选择“服务端复刻一次”：直接按 F9 说话，服务端会从第一段语音自动复刻音色，"
+            "不需要提前上传录音。固定 voice_id 仅供已经拥有兼容音色的高级用户使用。"
         )
         live_hint.setObjectName("hint")
         live_hint.setWordWrap(True)
@@ -1317,6 +1322,7 @@ class MainWindow(QMainWindow):
 
     def update_translation_engine_ui(self, *_args) -> None:
         live = self.translation_engine.currentData() == "live"
+        fixed_voice = live and self.live_voice_clone_mode.currentData() == "fixed"
         if live:
             self._select_data(self.speak_mode, "auto")
         self.speak_mode.setEnabled(not live)
@@ -1329,12 +1335,11 @@ class MainWindow(QMainWindow):
         for control in (
             self.live_translate_model,
             self.live_voice_clone_mode,
-            self.clone_live_voice_button,
         ):
             control.setEnabled(live)
-        self.live_voice.setEnabled(
-            live and self.live_voice_clone_mode.currentData() == "fixed"
-        )
+        self.live_voice.setEnabled(fixed_voice)
+        self.clone_live_voice_button.setVisible(fixed_voice)
+        self.clone_live_voice_button.setEnabled(fixed_voice)
 
     def apply_overlay_settings(self, *_args) -> None:
         if not hasattr(self, "overlay"):
@@ -2601,6 +2606,21 @@ class MainWindow(QMainWindow):
     def open_clone_dialog(self, model: str | None = None) -> None:
         self.save_settings_from_ui()
         self.clone_target_model = model or self.tts_model.currentText()
+        if self.clone_target_model.startswith("qwen3.5-livetranslate"):
+            choice = QMessageBox.question(
+                self,
+                "实验性固定音色",
+                "百炼当前可能拒绝为 Qwen3.5 LiveTranslate 预创建固定音色，并返回 "
+                "“preprocess service not found”。\n\n"
+                "推荐取消，然后选择“服务端复刻一次”：无需样音，直接按 F9 说话即可自动复刻。\n\n"
+                "仍要尝试固定音色创建吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if choice != QMessageBox.Yes:
+                self._select_data(self.live_voice_clone_mode, "once")
+                self.save_settings_from_ui()
+                return
         self.clone_dialog = VoiceCloneDialog(
             self.clone_target_model,
             self.settings,
@@ -2686,6 +2706,25 @@ class MainWindow(QMainWindow):
             )
             self._set_status("克隆音色已创建")
         else:
+            if (
+                self.clone_target_model.startswith("qwen3.5-livetranslate")
+                and "preprocess service not found" in message.lower()
+            ):
+                self._select_data(self.live_voice_clone_mode, "once")
+                self.live_voice.clear()
+                self.save_settings_from_ui()
+                if self.clone_dialog is not None:
+                    self.clone_dialog.reject()
+                detail = (
+                    "百炼当前没有为 Qwen3.5 LiveTranslate 提供可用的预创建固定音色处理服务。\n\n"
+                    "程序已自动切换为“服务端复刻一次”。现在无需上传录音，回到会议控制台后"
+                    "直接按住 F9 说话；服务端会从第一段语音自动复刻你的音色，并在本次会话中复用。"
+                )
+                if cleanup_warning:
+                    detail += f"\n\n注意：{cleanup_warning}"
+                QMessageBox.information(self, "已切换到可用的声音复刻方式", detail)
+                self._set_status("已切换为服务端复刻一次 · 直接按 F9 说话")
+                return
             if self.clone_dialog is not None:
                 for button in self.clone_dialog.findChildren(QPushButton):
                     button.setEnabled(True)

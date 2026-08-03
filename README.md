@@ -1,4 +1,4 @@
-# Teams 双向课堂翻译 v1.2.1
+# Teams 双向课堂翻译 v1.2.2
 
 [![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
@@ -10,7 +10,7 @@
 ## 下载
 
 - [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.2.1 更新记录](CHANGELOG.md#121---2026-08-03)
+- [查看 v1.2.2 更新记录](CHANGELOG.md#122---2026-08-03)
 - [快速开始](快速开始.txt)
 
 发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
@@ -57,17 +57,17 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `qwen-mt-flash`、`qwen-audio-3.0-tts-flash`：传统模式、键盘翻译及发声。
 - `qwen-plus`：可选的课堂总结。
 
-极速直译的固定克隆音色必须针对 `qwen3.5-livetranslate-flash-realtime` 单独创建，不能复用普通 TTS 的 `voice_id`。首次使用建议先选择“服务端复刻一次（推荐）”；如要每次保持完全一致，点击“创建直译专属音色”并改为“固定 voice_id”。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+极速直译首次使用请选择“服务端复刻一次（推荐，无需上传样音）”：直接按 F9 说话，服务端会从第一段语音自动复刻音色，并在本次会话内复用。百炼当前可能拒绝为 `qwen3.5-livetranslate-flash-realtime` 预创建固定音色；固定 `voice_id` 因此仅作为已有兼容音色用户的高级选项。普通 TTS 的 `voice_id` 不能直接复用。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
 
-## 一键本地声音复刻
+## 传统 TTS 一键本地声音复刻
 
-点击“创建直译专属音色”后可以直接选择本地录音，不再需要手工制作公网 URL：
+这套本地录音流程主要用于传统模式的 Qwen-Audio-TTS 克隆音色。LiveTranslate 推荐直接使用“服务端复刻一次”，不需要执行以下步骤。点击传统模式音色旁的“创建克隆音色”后可以直接选择本地录音，不再需要手工制作公网 URL：
 
 1. 首次使用点击“OSS 设置”，填写私有 Bucket 所在地域、Bucket 名称和 RAM AccessKey。
 2. 选择 iPhone `M4A`、MP3、WAV、AAC、CAF、FLAC、OGG、OPUS、WMA 或 MP4 音频。
 3. 程序自动裁剪为最多 30 秒，并转成 24 kHz、单声道、16-bit PCM WAV。
 4. 标准 WAV 使用随机对象名临时上传到私有 OSS，并生成 15 分钟 HTTPS 签名地址。
-5. 百炼返回固定 `voice_id` 后，程序自动填入并保存，同时立即删除 OSS 临时样音。
+5. 百炼返回普通 TTS 的固定 `voice_id` 后，程序自动填入并保存，同时立即删除 OSS 临时样音。
 
 阿里云建议使用 10–20 秒样音，至少包含 5 秒连续、清晰、无背景音乐的单人语音。参见[声音复刻官方指南](https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide)。
 
