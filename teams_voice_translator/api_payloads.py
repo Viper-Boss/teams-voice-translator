@@ -65,6 +65,65 @@ def build_translation_payload(
     }
 
 
+def build_live_translate_session_update(
+    *,
+    source_language: str = "zh",
+    target_language: str = "en",
+    phrases: dict[str, str] | None = None,
+    voice_mode: str = "once",
+    voice: str = "",
+    audio_enabled: bool = True,
+) -> dict[str, Any]:
+    """Build the official Qwen LiveTranslate realtime session config.
+
+    Manual turn detection is intentional: F9 is a push-to-talk control, so the
+    application commits the buffered audio immediately when the key is released.
+    """
+
+    translation: dict[str, Any] = {"language": target_language}
+    if phrases:
+        translation["corpus"] = {"phrases": phrases}
+
+    session: dict[str, Any] = {
+        "modalities": ["text", "audio"] if audio_enabled else ["text"],
+        "input_audio_format": "pcm",
+        "output_audio_format": "pcm",
+        "input_audio_transcription": {
+            "model": "qwen3-asr-flash-realtime",
+            "language": source_language,
+        },
+        "translation": translation,
+        "turn_detection": None,
+    }
+
+    if voice_mode in {"once", "always"}:
+        session.update(
+            {
+                "voice": "default",
+                "enable_voice_clone": True,
+                "voice_clone_options": {"frequency": voice_mode},
+            }
+        )
+    elif voice_mode == "fixed":
+        if not voice.strip():
+            raise ValueError("固定复刻音色模式需要填写 LiveTranslate voice_id")
+        session.update(
+            {
+                "voice": voice.strip(),
+                "enable_voice_clone": True,
+                "voice_clone_options": {"frequency": "never"},
+            }
+        )
+    elif voice.strip():
+        session["voice"] = voice.strip()
+
+    return {
+        "event_id": "event_session_update",
+        "type": "session.update",
+        "session": session,
+    }
+
+
 def build_tts_payload(
     text: str,
     *,

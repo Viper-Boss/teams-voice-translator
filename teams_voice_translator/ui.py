@@ -54,8 +54,10 @@ from .audio import (
 )
 from .config import SettingsStore
 from .hotkeys import HoldHotkeys
+from .live_translate import QwenLiveTranslate
 from .records import SubtitleSession, default_output_directory
 from .profiles import CourseProfileStore
+from .api_payloads import parse_json_list
 from . import __version__
 
 
@@ -69,6 +71,7 @@ class UiSignals(QObject):
     translate_up = Signal()
     cancel = Signal()
     asr_preview = Signal(str, str)
+    live_translation_preview = Signal(str)
     status = Signal(str)
     error = Signal(str)
     translation_ready = Signal(str, str, float, str)
@@ -362,7 +365,11 @@ class VoiceCloneDialog(QDialog):
         layout.addWidget(note)
         form = QFormLayout()
         self.model = QComboBox()
-        self.model.addItems(["qwen-audio-3.0-tts-flash", "qwen-audio-3.0-tts-plus"])
+        self.model.addItems([
+            "qwen-audio-3.0-tts-flash",
+            "qwen-audio-3.0-tts-plus",
+            "qwen3.5-livetranslate-flash-realtime",
+        ])
         self.model.setCurrentText(model)
         self.prefix = QLineEdit("myvoice")
         self.url = QLineEdit()
@@ -439,6 +446,7 @@ class MainWindow(QMainWindow):
         self.last_translation = ""
         self.awaiting_confirmation = False
         self.clone_dialog: VoiceCloneDialog | None = None
+        self.clone_target_model = ""
         self.hotkeys: HoldHotkeys | None = None
         self.recorder = DualTrackRecorder()
         self.recording_started_at: float | None = None
@@ -653,7 +661,43 @@ class MainWindow(QMainWindow):
         grid.addWidget(api_group, 0, 0)
         grid.addWidget(audio_group, 0, 1)
 
-        asr_group = QGroupBox("3. 官方实时语音识别")
+        live_group = QGroupBox("3. F9 极速语音直译 · 中文语音直接生成英文字幕和语音")
+        live_form = QFormLayout(live_group)
+        self.translation_engine = QComboBox()
+        self.translation_engine.addItem("极速直译（推荐，单模型低延迟）", "live")
+        self.translation_engine.addItem("传统流水线（ASR → Qwen-MT → TTS）", "classic")
+        self.live_translate_model = QComboBox()
+        self.live_translate_model.setEditable(True)
+        self.live_translate_model.addItems([
+            "qwen3.5-livetranslate-flash-realtime",
+            "qwen3.5-livetranslate-flash-realtime-2026-05-19",
+        ])
+        self.live_voice_clone_mode = QComboBox()
+        self.live_voice_clone_mode.addItem("服务端复刻一次（推荐）", "once")
+        self.live_voice_clone_mode.addItem("不复刻，使用默认音色（最快）", "default")
+        self.live_voice_clone_mode.addItem("每轮动态复刻（多人场景）", "always")
+        self.live_voice_clone_mode.addItem("使用预先复刻的固定音色", "fixed")
+        self.live_voice = QLineEdit()
+        self.live_voice.setPlaceholderText("固定 voice_id，例如 qwen-translate-vc-…；其他模式可留空")
+        live_voice_row = QHBoxLayout()
+        live_voice_row.addWidget(self.live_voice)
+        self.clone_live_voice_button = QPushButton("创建直译专属音色")
+        live_voice_row.addWidget(self.clone_live_voice_button)
+        live_form.addRow("F9 翻译引擎", self.translation_engine)
+        live_form.addRow("直译模型", self.live_translate_model)
+        live_form.addRow("声音复刻", self.live_voice_clone_mode)
+        live_form.addRow("直译 voice", live_voice_row)
+        live_hint = QLabel(
+            "极速模式通过一个 WebSocket 直接完成中文识别、英文翻译和英文语音流式输出。"
+            "请在 API Key 权限中授权 qwen3.5-livetranslate-flash-realtime。"
+            "固定音色需针对该模型单独创建，不能复用普通 TTS voice_id。"
+        )
+        live_hint.setObjectName("hint")
+        live_hint.setWordWrap(True)
+        live_form.addRow("", live_hint)
+        grid.addWidget(live_group, 1, 0, 1, 2)
+
+        asr_group = QGroupBox("4. 字幕、F8 与传统模式实时语音识别")
         asr_form = QFormLayout(asr_group)
         self.asr_model = QComboBox()
         self.asr_model.addItems([
@@ -686,7 +730,7 @@ class MainWindow(QMainWindow):
         vad_hint.setWordWrap(True)
         asr_form.addRow("", vad_hint)
 
-        mt_group = QGroupBox("4. 官方机器翻译")
+        mt_group = QGroupBox("5. 字幕、键盘输入与传统模式机器翻译")
         mt_form = QFormLayout(mt_group)
         self.translation_model = QComboBox()
         self.translation_model.addItems(["qwen-mt-flash", "qwen-mt-plus", "qwen-mt-turbo", "qwen-mt-lite"])
@@ -718,10 +762,10 @@ class MainWindow(QMainWindow):
         mt_form.addRow("翻译记忆 JSON", self.translation_memories)
         mt_form.addRow("发送方式", self.speak_mode)
 
-        grid.addWidget(asr_group, 1, 0)
-        grid.addWidget(mt_group, 1, 1)
+        grid.addWidget(asr_group, 2, 0)
+        grid.addWidget(mt_group, 2, 1)
 
-        tts_group = QGroupBox("5. 官方语音合成与克隆音色")
+        tts_group = QGroupBox("6. 键盘输入与传统模式语音合成")
         tts_form = QFormLayout(tts_group)
         self.tts_model = QComboBox()
         self.tts_model.addItems(["qwen-audio-3.0-tts-flash", "qwen-audio-3.0-tts-plus"])
@@ -765,7 +809,7 @@ class MainWindow(QMainWindow):
         tts_form.addRow("ContentPropagator", self.aigc_propagator)
         tts_form.addRow("PropagateID", self.aigc_propagate_id)
 
-        hotkey_group = QGroupBox("6. 快捷键与网络")
+        hotkey_group = QGroupBox("7. 快捷键与网络")
         hotkey_form = QFormLayout(hotkey_group)
         self.direct_hotkey = QComboBox()
         self.translate_hotkey = QComboBox()
@@ -784,8 +828,8 @@ class MainWindow(QMainWindow):
         hotkey_form.addRow("接口超时", self.request_timeout)
         hotkey_form.addRow("HTTP 代理", self.http_proxy)
 
-        grid.addWidget(tts_group, 2, 0)
-        grid.addWidget(hotkey_group, 2, 1)
+        grid.addWidget(tts_group, 3, 0)
+        grid.addWidget(hotkey_group, 3, 1)
 
         overlay_group = QGroupBox("7. 歌词式双语悬浮字幕")
         overlay_form = QFormLayout(overlay_group)
@@ -834,8 +878,8 @@ class MainWindow(QMainWindow):
         record_hint.setWordWrap(True)
         records_form.addRow("", record_hint)
 
-        grid.addWidget(overlay_group, 3, 0)
-        grid.addWidget(records_group, 3, 1)
+        grid.addWidget(overlay_group, 4, 0)
+        grid.addWidget(records_group, 4, 1)
 
         appearance_group = QGroupBox("9. 外观与实时字幕显示")
         appearance_form = QFormLayout(appearance_group)
@@ -852,7 +896,7 @@ class MainWindow(QMainWindow):
         appearance_hint.setObjectName("hint")
         appearance_hint.setWordWrap(True)
         appearance_form.addRow("", appearance_hint)
-        grid.addWidget(appearance_group, 4, 0, 1, 2)
+        grid.addWidget(appearance_group, 5, 0, 1, 2)
 
         profile_group = QGroupBox("10. 课程配置")
         profile_form = QFormLayout(profile_group)
@@ -873,15 +917,15 @@ class MainWindow(QMainWindow):
         profile_hint.setObjectName("hint")
         profile_hint.setWordWrap(True)
         profile_form.addRow("", profile_hint)
-        grid.addWidget(profile_group, 5, 0, 1, 2)
+        grid.addWidget(profile_group, 6, 0, 1, 2)
         layout.addLayout(grid)
         actions = QHBoxLayout()
         self.save_button = QPushButton("保存全部设置")
         self.save_button.setObjectName("primaryButton")
-        official = QPushButton("打开百炼模型页面")
+        official = QPushButton("打开极速直译官方文档")
         official.clicked.connect(
             lambda: QDesktopServices.openUrl(
-                QUrl("https://bailian.console.aliyun.com/cn-beijing?tab=model#/model-market/detail/qwen-audio-3.0-tts-flash")
+                QUrl("https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime")
             )
         )
         vb_cable = QPushButton("打开 VB-CABLE 官网")
@@ -903,6 +947,7 @@ class MainWindow(QMainWindow):
         self.signals.translate_up.connect(self.stop_translation_capture)
         self.signals.cancel.connect(self.cancel_all)
         self.signals.asr_preview.connect(self.update_asr_preview)
+        self.signals.live_translation_preview.connect(self.update_live_translation_preview)
         self.signals.status.connect(self._set_status)
         self.signals.error.connect(self.show_error)
         self.signals.translation_ready.connect(self.on_translation_ready)
@@ -934,7 +979,14 @@ class MainWindow(QMainWindow):
         self.refresh_devices_button.clicked.connect(self.refresh_audio_devices)
         self.audio_diagnostics_button.clicked.connect(self.run_audio_diagnostics)
         self.test_api_button.clicked.connect(self.test_api)
-        self.clone_voice_button.clicked.connect(self.open_clone_dialog)
+        self.clone_voice_button.clicked.connect(
+            lambda: self.open_clone_dialog(self.tts_model.currentText())
+        )
+        self.clone_live_voice_button.clicked.connect(
+            lambda: self.open_clone_dialog(self.live_translate_model.currentText())
+        )
+        self.translation_engine.currentIndexChanged.connect(self.update_translation_engine_ui)
+        self.live_voice_clone_mode.currentIndexChanged.connect(self.update_translation_engine_ui)
         self.glossary_button.clicked.connect(self.open_glossary_dialog)
         self.profile_load_button.clicked.connect(self.load_selected_profile)
         self.profile_save_button.clicked.connect(self.save_selected_profile)
@@ -981,6 +1033,10 @@ class MainWindow(QMainWindow):
                 "teacher_caption_enabled": self.teacher_caption_enabled.isChecked(),
                 "teacher_asr_language": "en",
                 "auto_start_teacher_caption": self.auto_start_teacher_caption.isChecked(),
+                "translation_engine": self.translation_engine.currentData(),
+                "live_translate_model": self.live_translate_model.currentText().strip(),
+                "live_voice_clone_mode": self.live_voice_clone_mode.currentData(),
+                "live_voice": self.live_voice.text().strip(),
                 "translation_model": self.translation_model.currentText(),
                 "summary_model": self.summary_model.currentText().strip(),
                 "source_language": "Chinese",
@@ -1040,6 +1096,12 @@ class MainWindow(QMainWindow):
         self.direct_caption_enabled.setChecked(bool(v["direct_caption_enabled"]))
         self.teacher_caption_enabled.setChecked(bool(v["teacher_caption_enabled"]))
         self.auto_start_teacher_caption.setChecked(bool(v["auto_start_teacher_caption"]))
+        self._select_data(self.translation_engine, v.get("translation_engine", "live"))
+        self.live_translate_model.setCurrentText(
+            v.get("live_translate_model", "qwen3.5-livetranslate-flash-realtime")
+        )
+        self._select_data(self.live_voice_clone_mode, v.get("live_voice_clone_mode", "once"))
+        self.live_voice.setText(v.get("live_voice", ""))
         self.translation_model.setCurrentText(v["translation_model"])
         self.summary_model.setCurrentText(v["summary_model"])
         self.translation_domain.setText(v["translation_domain"])
@@ -1080,12 +1142,34 @@ class MainWindow(QMainWindow):
         self.apply_overlay_settings()
         self.apply_subtitle_display_mode()
         self.apply_theme()
+        self.update_translation_engine_ui()
 
     @staticmethod
     def _select_data(box: QComboBox, value: Any) -> None:
         index = box.findData(value)
         if index >= 0:
             box.setCurrentIndex(index)
+
+    def update_translation_engine_ui(self, *_args) -> None:
+        live = self.translation_engine.currentData() == "live"
+        if live:
+            self._select_data(self.speak_mode, "auto")
+        self.speak_mode.setEnabled(not live)
+        self.speak_mode.setToolTip(
+            "极速模式会边生成边播放，因此固定为自动发送。" if live else ""
+        )
+        self.translate_button.setText(
+            "按住极速翻译说话\nF9" if live else "按住传统翻译说话\nF9"
+        )
+        for control in (
+            self.live_translate_model,
+            self.live_voice_clone_mode,
+            self.clone_live_voice_button,
+        ):
+            control.setEnabled(live)
+        self.live_voice.setEnabled(
+            live and self.live_voice_clone_mode.currentData() == "fixed"
+        )
 
     def apply_overlay_settings(self, *_args) -> None:
         if not hasattr(self, "overlay"):
@@ -1388,10 +1472,19 @@ class MainWindow(QMainWindow):
         profile = self.profile_store.get(name)
         if profile is None:
             return False
+        self._select_data(
+            self.translation_engine,
+            profile.get("translation_engine", "live") or "live",
+        )
         self.translation_domain.setText(str(profile.get("translation_domain", "")))
         self.translation_terms.setPlainText(str(profile.get("translation_terms", "")))
         self.translation_memories.setPlainText(str(profile.get("translation_memories", "")))
         self._select_data(self.translation_style, profile.get("translation_style", "polite"))
+        self._select_data(
+            self.live_voice_clone_mode,
+            profile.get("live_voice_clone_mode", "once") or "once",
+        )
+        self.live_voice.setText(str(profile.get("live_voice", "")))
         self.tts_instruction.setText(str(profile.get("tts_instruction", "")))
         self.voice.setText(str(profile.get("voice", "")))
         self.profile_name.setCurrentText(name)
@@ -1399,6 +1492,7 @@ class MainWindow(QMainWindow):
         self._select_data(self.profile_quick, name)
         self.profile_quick.blockSignals(False)
         self.settings.update({"active_profile": name})
+        self.update_translation_engine_ui()
         self._set_status(f"已载入课程配置：{name}")
         return True
 
@@ -1965,6 +2059,9 @@ class MainWindow(QMainWindow):
     def _translation_worker(self, values: dict[str, Any], started_at: float) -> None:
         asr: QwenRealtimeASR | None = None
         try:
+            if values.get("translation_engine") == "live":
+                self._live_translation_worker(values, started_at)
+                return
             client = self._make_client(values)
             asr = QwenRealtimeASR(
                 api_key=client.api_key,
@@ -2001,11 +2098,120 @@ class MainWindow(QMainWindow):
             if not values["confirm_before_speak"] and not self.cancel_event.is_set():
                 self._stream_speech(client, english, values)
         except Exception as exc:
-            self.signals.error.emit(str(exc))
+            if not self.cancel_event.is_set():
+                self.signals.error.emit(str(exc))
         finally:
             if asr is not None:
                 asr.close()
             self.signals.tts_finished.emit()
+
+    def _live_translation_worker(self, values: dict[str, Any], started_at: float) -> None:
+        client = self._make_client(values)
+        terms = parse_json_list(values.get("translation_terms", ""), "术语表")
+        phrases = {item["source"]: item["target"] for item in terms}
+        devices = [values["teams_output_device"]]
+        if values["monitor_enabled"]:
+            devices.append(values["monitor_output_device"])
+
+        audio_queue: queue.Queue[bytes | None] = queue.Queue()
+        playback_errors: list[Exception] = []
+        playback_thread: threading.Thread | None = None
+        session: QwenLiveTranslate | None = None
+        self.tts_active.set()
+        try:
+            with MultiOutputPlayer(devices, 24000) as player:
+                def play_audio() -> None:
+                    failed = False
+                    while True:
+                        item = audio_queue.get()
+                        try:
+                            if item is None:
+                                return
+                            if not failed:
+                                player.write(item)
+                        except Exception as exc:
+                            failed = True
+                            playback_errors.append(exc)
+                        finally:
+                            audio_queue.task_done()
+
+                playback_thread = threading.Thread(
+                    target=play_audio,
+                    name="live-translate-audio-output",
+                    daemon=True,
+                )
+                playback_thread.start()
+                session = QwenLiveTranslate(
+                    api_key=client.api_key,
+                    workspace_id=client.workspace_id,
+                    model=values["live_translate_model"],
+                    source_language="zh",
+                    target_language="en",
+                    phrases=phrases,
+                    voice_mode=values["live_voice_clone_mode"],
+                    voice=values.get("live_voice", ""),
+                    audio_enabled=True,
+                    on_source_preview=lambda text: self.signals.asr_preview.emit(text, "live"),
+                    on_translation_preview=self.signals.live_translation_preview.emit,
+                    on_audio=audio_queue.put,
+                    on_status=self.signals.status.emit,
+                    on_error=lambda error: log.warning("LiveTranslate: %s", error),
+                )
+                session.start()
+                session.wait_ready()
+                assert self.translation_queue is not None
+                while not self.cancel_event.is_set():
+                    chunk = self.translation_queue.get()
+                    if chunk is None:
+                        break
+                    session.send_audio(chunk)
+                if self.cancel_event.is_set():
+                    return
+
+                self.signals.status.emit("中文已提交 · 正在直接生成英文字幕和语音…")
+                result = session.commit_and_wait(
+                    timeout=max(30.0, float(values["request_timeout"])),
+                    cancel_event=self.cancel_event,
+                )
+                session.finish()
+                session = None
+
+                audio_queue.put(None)
+                audio_queue.join()
+                playback_thread.join(timeout=1.0)
+                if playback_errors:
+                    raise ApiError(f"极速直译音频播放失败：{playback_errors[0]}")
+
+                chinese = result.source_text
+                english = result.translated_text
+                elapsed = time.perf_counter() - started_at
+                self.last_translation = english
+                self.awaiting_confirmation = False
+                self.signals.translation_ready.emit(
+                    chinese,
+                    english,
+                    elapsed,
+                    "我 / F9 极速直译",
+                )
+                if result.first_audio_seconds is not None:
+                    self.signals.status.emit(
+                        f"极速直译完成 · 松开 F9 后 {result.first_audio_seconds:.2f}s 开始出声"
+                    )
+        finally:
+            if session is not None:
+                session.close()
+            if self.cancel_event.is_set():
+                while True:
+                    try:
+                        audio_queue.get_nowait()
+                        audio_queue.task_done()
+                    except queue.Empty:
+                        break
+            if playback_thread is not None and playback_thread.is_alive():
+                audio_queue.put(None)
+                audio_queue.join()
+                playback_thread.join(timeout=1.0)
+            self.tts_active.clear()
 
     def _stream_speech(self, client: BailianClient, english: str, values: dict[str, Any]) -> None:
         self.signals.status.emit("正在合成并发送英文到 Teams…")
@@ -2129,6 +2335,11 @@ class MainWindow(QMainWindow):
         self.emotion_label.setText(f"识别情绪：{emotion or '—'}")
         self.sync_overlay_from_editors()
 
+    def update_live_translation_preview(self, text: str) -> None:
+        self.english_text.setPlainText(text)
+        self.emotion_label.setText("来源：我 / F9 极速直译")
+        self.sync_overlay_from_editors()
+
     def on_translation_ready(self, chinese: str, english: str, elapsed: float, source: str) -> None:
         is_teacher = source.startswith("老师")
         if not (is_teacher and self.awaiting_confirmation):
@@ -2191,8 +2402,27 @@ class MainWindow(QMainWindow):
 
         def worker() -> None:
             try:
-                result = self._make_client(values).translate("你好，这是一次连接测试。", values)
-                self.signals.test_finished.emit(True, f"连接成功，翻译返回：{result}")
+                client = self._make_client(values)
+                if values.get("translation_engine") == "live":
+                    session = QwenLiveTranslate(
+                        api_key=client.api_key,
+                        workspace_id=client.workspace_id,
+                        model=values["live_translate_model"],
+                        voice_mode="default",
+                        audio_enabled=False,
+                    )
+                    try:
+                        session.start()
+                        session.wait_ready()
+                        self.signals.test_finished.emit(
+                            True,
+                            f"连接成功：{values['live_translate_model']} 极速直译 WebSocket 已就绪。",
+                        )
+                    finally:
+                        session.finish()
+                else:
+                    result = client.translate("你好，这是一次连接测试。", values)
+                    self.signals.test_finished.emit(True, f"连接成功，翻译返回：{result}")
             except Exception as exc:
                 self.signals.test_finished.emit(False, str(exc))
 
@@ -2203,9 +2433,10 @@ class MainWindow(QMainWindow):
         self._set_status("API 测试成功" if ok else "API 测试失败")
         (QMessageBox.information if ok else QMessageBox.critical)(self, "API 测试", message)
 
-    def open_clone_dialog(self) -> None:
+    def open_clone_dialog(self, model: str | None = None) -> None:
         self.save_settings_from_ui()
-        self.clone_dialog = VoiceCloneDialog(self.tts_model.currentText(), self)
+        self.clone_target_model = model or self.tts_model.currentText()
+        self.clone_dialog = VoiceCloneDialog(self.clone_target_model, self)
         self.clone_dialog.create_requested.connect(self.create_voice)
         self.clone_dialog.exec()
 
@@ -2227,11 +2458,15 @@ class MainWindow(QMainWindow):
 
     def on_clone_finished(self, ok: bool, message: str) -> None:
         if ok:
-            self.voice.setText(message)
-            if message.startswith("qwen-audio-3.0-tts-plus-"):
-                self.tts_model.setCurrentText("qwen-audio-3.0-tts-plus")
-            elif message.startswith("qwen-audio-3.0-tts-flash-"):
-                self.tts_model.setCurrentText("qwen-audio-3.0-tts-flash")
+            if self.clone_target_model.startswith("qwen3.5-livetranslate"):
+                self.live_voice.setText(message)
+                self._select_data(self.live_voice_clone_mode, "fixed")
+            else:
+                self.voice.setText(message)
+                if message.startswith("qwen-audio-3.0-tts-plus-"):
+                    self.tts_model.setCurrentText("qwen-audio-3.0-tts-plus")
+                elif message.startswith("qwen-audio-3.0-tts-flash-"):
+                    self.tts_model.setCurrentText("qwen-audio-3.0-tts-flash")
             self.save_settings_from_ui()
             if self.clone_dialog is not None:
                 self.clone_dialog.accept()

@@ -2,6 +2,7 @@ import unittest
 
 from teams_voice_translator.api_payloads import (
     build_asr_session_update,
+    build_live_translate_session_update,
     build_translation_payload,
     build_tts_payload,
     build_voice_clone_payload,
@@ -34,6 +35,25 @@ class PayloadTests(unittest.TestCase):
         )
         self.assertEqual(payload["input"]["format"], "pcm")
         self.assertTrue(payload["input"]["text"].startswith("[amazed]"))
+
+    def test_live_translate_push_to_talk_with_voice_clone(self):
+        payload = build_live_translate_session_update(
+            phrases={"有限元": "finite element method"},
+            voice_mode="once",
+        )
+        session = payload["session"]
+        self.assertIsNone(session["turn_detection"])
+        self.assertEqual(session["translation"]["language"], "en")
+        self.assertEqual(
+            session["translation"]["corpus"]["phrases"]["有限元"],
+            "finite element method",
+        )
+        self.assertEqual(session["voice_clone_options"]["frequency"], "once")
+        self.assertEqual(session["input_audio_transcription"]["language"], "zh")
+
+    def test_live_translate_fixed_voice_requires_id(self):
+        with self.assertRaises(ValueError):
+            build_live_translate_session_update(voice_mode="fixed", voice="")
 
     def test_voice_clone_payload(self):
         payload = build_voice_clone_payload(

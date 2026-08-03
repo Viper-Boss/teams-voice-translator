@@ -3,10 +3,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from teams_voice_translator.config import SettingsStore
+from teams_voice_translator.config import DEFAULTS, SettingsStore
 
 
 class SettingsTests(unittest.TestCase):
+    def test_live_translate_is_the_default_f9_engine(self):
+        self.assertEqual(DEFAULTS["translation_engine"], "live")
+        self.assertEqual(
+            DEFAULTS["live_translate_model"],
+            "qwen3.5-livetranslate-flash-realtime",
+        )
+
     def test_json_never_contains_api_key(self):
         with tempfile.TemporaryDirectory() as temp:
             store = SettingsStore(Path(temp))

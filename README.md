@@ -1,4 +1,4 @@
-# Teams 双向课堂翻译 v1.0.0
+# Teams 双向课堂翻译 v1.1.0
 
 [![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
@@ -10,7 +10,7 @@
 ## 下载
 
 - [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.0.0 更新记录](CHANGELOG.md#100---2026-08-02)
+- [查看 v1.1.0 更新记录](CHANGELOG.md#110---2026-08-03)
 - [快速开始](快速开始.txt)
 
 发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
@@ -19,10 +19,11 @@
 
 ## 核心能力
 
-- 你说中文：实时中文字幕 → 英文翻译 → 系统音色或克隆音色 → VB-CABLE → Teams。
+- 你说中文（极速模式）：`Qwen3.5 LiveTranslate` 单条实时链路直接输出中文字幕、英文字幕和英文语音 → VB-CABLE → Teams。
+- 你说中文（传统模式）：实时 ASR → Qwen-MT → Qwen-Audio-TTS，保留编辑确认、翻译记忆和表达风格能力。
 - 老师说英文：捕获 Teams 扬声器声音 → 实时英文原文 → 中文字幕。
 - `F8` 原声：你的声音立即进入 Teams，同时在后台生成中英文字幕。
-- `F9` 翻译：松开后翻译并播放英文，可选择先确认和编辑。
+- `F9` 翻译：默认使用极速直译，松开后流式播放英文；也可切回传统三模型模式并选择先确认和编辑。
 - 键盘输入：`Enter` 翻译并发送，`Ctrl+Enter` 或 `Shift+Enter` 换行。
 - 双向三轨录音：你的麦克风、老师系统声、双方混合会议各一份 WAV。
 - 完整时间轴：标记“我 / 老师”、中英文、时间和处理耗时，并支持搜索和双击重新载入。
@@ -47,6 +48,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 百炼配置
 
 在“设置”中填写北京地域的 Workspace ID 和 API Key，然后测试连通性。API Key 保存到 Windows 凭据管理器，不会写入源码或 `settings.json`。
+
+推荐在该业务空间中授权以下模型：
+
+- `qwen3.5-livetranslate-flash-realtime`：F9 极速中文语音直译英文字幕和语音。
+- `qwen3-asr-flash-realtime`：F8、老师字幕，以及极速直译的源语音转写。
+- `qwen-mt-flash`、`qwen-audio-3.0-tts-flash`：传统模式、键盘翻译及发声。
+- `qwen-plus`：可选的课堂总结。
+
+极速直译的固定克隆音色必须针对 `qwen3.5-livetranslate-flash-realtime` 单独创建，不能复用普通 TTS 的 `voice_id`。首次使用建议先选择“首次生成时克隆（推荐）”；如要每次保持完全一致，点击“创建直译专属音色”并改为“固定 voice_id”。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
 
 普通配置和日志分别位于：
 
@@ -77,11 +87,16 @@ Windows 的命名方向是正确的：程序向 `CABLE Input` 播放，Teams 从
 
 1. 点击“开始听老师 / Teams”，老师英文会逐句显示原文和中文翻译。
 2. 按住 `F8` 可用原声回答；松开后字幕会完整进入时间轴。
-3. 按住 `F9` 说中文；松开后翻译为英文并通过当前音色发给 Teams。
+3. 按住 `F9` 说中文；松开后翻译为英文并通过当前音色发给 Teams。默认极速模式会流式播放，状态栏会显示松开按键到首段英文音频的耗时。
 4. `Esc` 停止当前语音，并关闭老师监听。
 5. 软件自己播放英文时，会暂时阻止这段声音重新进入老师识别通道。
 
-发送方式支持：
+F9 有两种翻译引擎：
+
+- 极速直译（推荐）：单个实时模型同时完成中文识别、英文翻译和英文语音，延迟更低；由于语音会边生成边播放，固定为自动发送。
+- 传统模式：ASR、机器翻译、TTS 三段处理，延迟较高，但支持先确认、翻译记忆、领域和表达风格。
+
+传统模式发送方式支持：
 
 - 立即翻译并发送：延迟最低。
 - 先确认/编辑：译文出现后可以修改，再点“播放/发送当前英文”。
@@ -135,8 +150,9 @@ meeting_mixed_时间.wav    双方混合会议
 
 ## 隐私和限制
 
-- 开启 F8/F9 或老师字幕时，对应音频会发送到百炼实时 ASR。
-- 双向文本会发送到 Qwen-MT；需要发声时英文会发送到 Qwen-Audio-TTS。
+- 开启 F8、老师字幕或传统 F9 时，对应音频会发送到百炼实时 ASR。
+- 极速 F9 会把中文音频发送到 Qwen3.5 LiveTranslate，并接收英文字幕和音频流。
+- 传统 F9 与双向文本会发送到 Qwen-MT；需要发声时英文会发送到 Qwen-Audio-TTS。
 - 点击课堂总结时，本次双向字幕会发送到所选 Qwen 总结模型。
 - API Key 由 Windows 凭据管理器保存；日志不记录 API Key。
 - 系统声回环会捕获所选播放设备上的声音，不只 Teams。会议期间不要在同一设备播放其他音频。
