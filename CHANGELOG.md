@@ -2,6 +2,22 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.3] - 2026-08-03
+
+### 新增
+
+- 会议控制台新增“F9 持续翻译”总开关：开启后按一次 F9 即持续监听，服务端 VAD 检测停顿并自动逐句翻译，再按一次停止。
+- F9 持续模式运行时按住 F8，会自动终止持续翻译并切换到 F8 原声；松开 F8 后正常结束原声通道。
+
+### 修复
+
+- F9 按住模式不再为每句话新建 LiveTranslate WebSocket；同一程序会话会复用连接，使“服务端复刻一次”能在第二句及后续真正复用用户音色。
+- 设置变化、取消或连接异常时会主动释放旧连接，下一次 F9 自动建立干净会话。
+
+### 验证
+
+- 新增持续模式 server VAD 参数、多轮状态重置和逐句结果回调测试；共 34 项单元测试通过。
+
 ## [1.2.2] - 2026-08-03
 
 ### 修复
@@ -89,5 +105,6 @@
 - 保证连续启动的字幕缓存文件名唯一，避免 Windows 低精度系统时钟下偶发覆盖或无法恢复。
 
 [1.2.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.2.0
+[1.2.3]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.2.3
 [1.1.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Viper-Boss/teams-voice-translator/releases/tag/v1.0.0

@@ -1,4 +1,4 @@
-# Teams 双向课堂翻译 v1.2.2
+# Teams 双向课堂翻译 v1.2.3
 
 [![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
@@ -10,7 +10,7 @@
 ## 下载
 
 - [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.2.2 更新记录](CHANGELOG.md#122---2026-08-03)
+- [查看 v1.2.3 更新记录](CHANGELOG.md#123---2026-08-03)
 - [快速开始](快速开始.txt)
 
 发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
@@ -23,7 +23,8 @@
 - 你说中文（传统模式）：实时 ASR → Qwen-MT → Qwen-Audio-TTS，保留编辑确认、翻译记忆和表达风格能力。
 - 老师说英文：捕获 Teams 扬声器声音 → 实时英文原文 → 中文字幕。
 - `F8` 原声：你的声音立即进入 Teams，同时在后台生成中英文字幕。
-- `F9` 翻译：默认使用极速直译，松开后流式播放英文；也可切回传统三模型模式并选择先确认和编辑。
+- `F9` 翻译：可选择按住说话，或开启持续模式后按一次开始；持续模式由服务端自动检测停顿并逐句翻译。
+- F8 自动接管：F9 持续翻译期间按住 `F8`，程序会停止持续翻译并切换到原声通道。
 - 键盘输入：`Enter` 翻译并发送，`Ctrl+Enter` 或 `Shift+Enter` 换行。
 - 双向三轨录音：你的麦克风、老师系统声、双方混合会议各一份 WAV。
 - 完整时间轴：标记“我 / 老师”、中英文、时间和处理耗时，并支持搜索和双击重新载入。
@@ -57,7 +58,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `qwen-mt-flash`、`qwen-audio-3.0-tts-flash`：传统模式、键盘翻译及发声。
 - `qwen-plus`：可选的课堂总结。
 
-极速直译首次使用请选择“服务端复刻一次（推荐，无需上传样音）”：直接按 F9 说话，服务端会从第一段语音自动复刻音色，并在本次会话内复用。百炼当前可能拒绝为 `qwen3.5-livetranslate-flash-realtime` 预创建固定音色；固定 `voice_id` 因此仅作为已有兼容音色用户的高级选项。普通 TTS 的 `voice_id` 不能直接复用。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+极速直译首次使用请选择“服务端复刻一次（推荐，无需上传样音）”。v1.2.3 会在多次 F9 之间保留同一个 WebSocket：第一段用于建立音色校准，第一段输出可能短暂使用默认过渡音色，第二段及后续会在同一会话内复用你的音色。持续模式天然复用整场连接。百炼当前可能拒绝为 `qwen3.5-livetranslate-flash-realtime` 预创建固定音色；固定 `voice_id` 因此仅作为已有兼容音色用户的高级选项。普通 TTS 的 `voice_id` 不能直接复用。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
 
 ## 传统 TTS 一键本地声音复刻
 
@@ -116,8 +117,8 @@ Windows 的命名方向是正确的：程序向 `CABLE Input` 播放，Teams 从
 ## 双向会议操作
 
 1. 点击“开始听老师 / Teams”，老师英文会逐句显示原文和中文翻译。
-2. 按住 `F8` 可用原声回答；松开后字幕会完整进入时间轴。
-3. 按住 `F9` 说中文；松开后翻译为英文并通过当前音色发给 Teams。默认极速模式会流式播放，状态栏会显示松开按键到首段英文音频的耗时。
+2. 按住 `F8` 可用原声回答；松开后字幕会完整进入时间轴。若 F9 持续模式正在运行，按住 F8 会自动停止 F9 并接管为原声。
+3. 普通模式下按住 `F9` 说中文，松开后翻译并发给 Teams。勾选会议页的“F9 持续翻译”后，按一次 F9 开始持续监听；每次停顿会自动形成一句并翻译，再按一次 F9 停止。
 4. `Esc` 停止当前语音，并关闭老师监听。
 5. 软件自己播放英文时，会暂时阻止这段声音重新进入老师识别通道。
 

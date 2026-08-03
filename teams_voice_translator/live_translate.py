@@ -24,7 +24,7 @@ class LiveTranslateResult:
 
 
 class QwenLiveTranslate:
-    """One push-to-talk Qwen3.5 LiveTranslate WebSocket session."""
+    """Reusable Qwen3.5 LiveTranslate WebSocket session."""
 
     def __init__(
         self,
@@ -38,9 +38,13 @@ class QwenLiveTranslate:
         voice_mode: str = "once",
         voice: str = "",
         audio_enabled: bool = True,
+        continuous: bool = False,
+        vad_threshold: float = 0.0,
+        vad_silence_ms: int = 500,
         on_source_preview: Callable[[str], None] | None = None,
         on_translation_preview: Callable[[str], None] | None = None,
         on_audio: Callable[[bytes], None] | None = None,
+        on_result: Callable[[LiveTranslateResult], None] | None = None,
         on_status: Callable[[str], None] | None = None,
         on_error: Callable[[str], None] | None = None,
     ) -> None:
@@ -50,8 +54,10 @@ class QwenLiveTranslate:
         self.on_source_preview = on_source_preview or (lambda _text: None)
         self.on_translation_preview = on_translation_preview or (lambda _text: None)
         self.on_audio = on_audio or (lambda _pcm: None)
+        self.on_result = on_result or (lambda _result: None)
         self.on_status = on_status or (lambda _text: None)
         self.on_error = on_error or (lambda _text: None)
+        self.continuous = bool(continuous)
         self.session_payload = build_live_translate_session_update(
             source_language=source_language,
             target_language=target_language,
@@ -59,6 +65,9 @@ class QwenLiveTranslate:
             voice_mode=voice_mode,
             voice=voice,
             audio_enabled=audio_enabled,
+            continuous=self.continuous,
+            vad_threshold=vad_threshold,
+            vad_silence_ms=vad_silence_ms,
         )
 
         self.ready = threading.Event()
@@ -71,6 +80,8 @@ class QwenLiveTranslate:
         self.usage: dict[str, Any] = {}
         self.first_audio_seconds: float | None = None
         self._committed_at: float | None = None
+        self._turn_active = False
+        self.completed_turns = 0
         self.ws: websocket.WebSocketApp | None = None
         self.thread: threading.Thread | None = None
 
@@ -105,7 +116,27 @@ class QwenLiveTranslate:
     def send_audio(self, pcm: bytes) -> None:
         if not self.ws or not self.opened.is_set():
             raise ApiError("极速直译连接尚未就绪")
+        if not self.continuous and not self._turn_active:
+            self.begin_turn()
         self._send("input_audio_buffer.append", audio=base64.b64encode(pcm).decode("ascii"))
+
+    def begin_turn(self) -> None:
+        """Reset per-utterance state while keeping the WebSocket alive."""
+        self._raise_if_error()
+        if not self.ws or not self.opened.is_set():
+            raise ApiError("极速直译连接尚未就绪")
+        if self._turn_active and not self.response_done.is_set():
+            raise ApiError("上一段极速直译仍在处理中")
+        self._reset_turn_state()
+        self._turn_active = True
+
+    def _reset_turn_state(self) -> None:
+        self.response_done.clear()
+        self.source_text = ""
+        self.translated_text = ""
+        self.usage = {}
+        self.first_audio_seconds = None
+        self._committed_at = None
 
     def commit_and_wait(
         self,
@@ -116,6 +147,8 @@ class QwenLiveTranslate:
         self._raise_if_error()
         if not self.ws or not self.opened.is_set():
             raise ApiError("极速直译连接已断开")
+        if not self._turn_active:
+            self.begin_turn()
         self._committed_at = time.perf_counter()
         self._send("input_audio_buffer.commit")
         deadline = time.monotonic() + timeout
@@ -128,12 +161,15 @@ class QwenLiveTranslate:
         self._raise_if_error()
         if not self.translated_text.strip():
             raise ApiError("极速直译没有返回有效译文")
-        return LiveTranslateResult(
+        result = LiveTranslateResult(
             source_text=self.source_text.strip(),
             translated_text=self.translated_text.strip(),
             first_audio_seconds=self.first_audio_seconds,
             usage=dict(self.usage),
         )
+        self.completed_turns += 1
+        self._turn_active = False
+        return result
 
     def finish(self, timeout: float = 15.0) -> None:
         if self.ws and self.opened.is_set():
@@ -208,9 +244,28 @@ class QwenLiveTranslate:
                 if self.first_audio_seconds is None and self._committed_at is not None:
                     self.first_audio_seconds = time.perf_counter() - self._committed_at
                 self.on_audio(base64.b64decode(encoded))
+        elif kind == "input_audio_buffer.speech_started":
+            if self.continuous and not self._turn_active:
+                self._reset_turn_state()
+                self._turn_active = True
+            self.on_status("检测到中文语音 · 正在实时翻译…")
+        elif kind == "input_audio_buffer.speech_stopped":
+            self._committed_at = time.perf_counter()
+            self.on_status("检测到停顿 · 正在生成英文语音…")
         elif kind == "response.done":
             self.usage = (event.get("response") or {}).get("usage") or {}
             self.response_done.set()
+            if self.continuous:
+                result = LiveTranslateResult(
+                    source_text=self.source_text.strip(),
+                    translated_text=self.translated_text.strip(),
+                    first_audio_seconds=self.first_audio_seconds,
+                    usage=dict(self.usage),
+                )
+                if result.translated_text:
+                    self.completed_turns += 1
+                    self.on_result(result)
+                self._turn_active = False
         elif kind == "session.finished":
             self.session_finished.set()
         elif kind == "error":

@@ -10,6 +10,7 @@ from teams_voice_translator.config import DEFAULTS, SettingsStore
 class SettingsTests(unittest.TestCase):
     def test_live_translate_is_the_default_f9_engine(self):
         self.assertEqual(DEFAULTS["translation_engine"], "live")
+        self.assertFalse(DEFAULTS["continuous_f9_enabled"])
         self.assertEqual(
             DEFAULTS["live_translate_model"],
             "qwen3.5-livetranslate-flash-realtime",
