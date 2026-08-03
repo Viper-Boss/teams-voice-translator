@@ -172,15 +172,25 @@ def build_voice_clone_payload(
     max_seconds: float = 20.0,
     preprocess: bool = False,
 ) -> dict[str, Any]:
-    return {
-        "model": "voice-enrollment",
-        "input": {
-            "action": "create_voice",
-            "target_model": target_model,
-            "prefix": prefix.strip(),
-            "url": audio_url.strip(),
-            "language_hints": [language],
-            "max_prompt_audio_length": float(max_seconds),
-            "enable_preprocess": bool(preprocess),
-        },
+    payload_input: dict[str, Any] = {
+        "action": "create_voice",
+        "target_model": target_model,
+        "prefix": prefix.strip(),
+        "url": audio_url.strip(),
     }
+    preprocess_targets = {
+        "qwen-audio-3.0-tts-plus",
+        "qwen-audio-3.0-tts-flash",
+        "cosyvoice-v3.5-plus",
+        "cosyvoice-v3.5-flash",
+        "cosyvoice-v3-flash",
+    }
+    if target_model in preprocess_targets:
+        payload_input.update(
+            {
+                "language_hints": [language],
+                "max_prompt_audio_length": float(max_seconds),
+                "enable_preprocess": bool(preprocess),
+            }
+        )
+    return {"model": "voice-enrollment", "input": payload_input}

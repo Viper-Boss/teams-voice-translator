@@ -489,6 +489,7 @@ class VoiceCloneDialog(QDialog):
         self.max_seconds.setValue(20.0)
         self.max_seconds.setSuffix(" 秒")
         self.preprocess = QCheckBox("开启降噪、增强和音量归一化")
+        self.model.currentTextChanged.connect(self.refresh_model_options)
         form.addRow("目标模型", self.model)
         form.addRow("音色前缀", self.prefix)
         form.addRow("样音文件", source_row)
@@ -496,6 +497,7 @@ class VoiceCloneDialog(QDialog):
         form.addRow("最大取样长度", self.max_seconds)
         form.addRow("样音预处理", self.preprocess)
         layout.addLayout(form)
+        self.refresh_model_options()
         self.oss_status = QLabel()
         self.oss_status.setObjectName("hint")
         self.refresh_oss_status()
@@ -526,6 +528,18 @@ class VoiceCloneDialog(QDialog):
         )
         if path:
             self.url.setText(path)
+
+    def refresh_model_options(self) -> None:
+        supported = self.model.currentText() in {
+            "qwen-audio-3.0-tts-flash",
+            "qwen-audio-3.0-tts-plus",
+        }
+        self.preprocess.setEnabled(supported)
+        if not supported:
+            self.preprocess.setChecked(False)
+            self.preprocess.setToolTip("LiveTranslate 不支持服务端样音预处理；本地格式标准化仍会自动执行。")
+        else:
+            self.preprocess.setToolTip("")
 
     def open_oss_settings(self) -> None:
         self.configure_oss()
@@ -615,7 +629,7 @@ class MainWindow(QMainWindow):
         self.load_settings_into_ui()
         self.start_hotkeys()
         self.setWindowTitle("Teams 双向课堂翻译")
-        self.resize(1120, 790)
+        self.resize(1280, 790)
         self._set_status("就绪 · F8 原声 / F9 翻译")
         QTimer.singleShot(300, self.offer_cache_recovery)
         if self.settings.get("auto_start_teacher_caption"):
