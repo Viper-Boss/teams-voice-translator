@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
     "live_translate_model": "qwen3.5-livetranslate-flash-realtime",
     "live_voice_clone_mode": "once",
     "live_voice": "",
+    "continuous_f9_enabled": False,
     "summary_model": "qwen-plus",
     "source_language": "Chinese",
     "target_language": "English",

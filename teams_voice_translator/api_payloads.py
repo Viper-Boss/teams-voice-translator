@@ -73,11 +73,14 @@ def build_live_translate_session_update(
     voice_mode: str = "once",
     voice: str = "",
     audio_enabled: bool = True,
+    continuous: bool = False,
+    vad_threshold: float = 0.0,
+    vad_silence_ms: int = 500,
 ) -> dict[str, Any]:
     """Build the official Qwen LiveTranslate realtime session config.
 
-    Manual turn detection is intentional: F9 is a push-to-talk control, so the
-    application commits the buffered audio immediately when the key is released.
+    Push-to-talk uses manual commits. Continuous F9 mode uses the official
+    server-side VAD so one WebSocket can detect and translate many utterances.
     """
 
     translation: dict[str, Any] = {"language": target_language}
@@ -93,7 +96,15 @@ def build_live_translate_session_update(
             "language": source_language,
         },
         "translation": translation,
-        "turn_detection": None,
+        "turn_detection": (
+            {
+                "type": "server_vad",
+                "threshold": float(vad_threshold),
+                "silence_duration_ms": int(vad_silence_ms),
+            }
+            if continuous
+            else None
+        ),
     }
 
     if voice_mode in {"once", "always"}:

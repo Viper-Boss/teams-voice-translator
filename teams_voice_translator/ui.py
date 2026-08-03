@@ -84,6 +84,7 @@ class UiSignals(QObject):
     test_finished = Signal(bool, str)
     clone_finished = Signal(bool, str, str)
     summary_ready = Signal(bool, str)
+    continuous_finished = Signal(str)
 
 
 class HoldButton(QPushButton):
@@ -605,6 +606,12 @@ class MainWindow(QMainWindow):
         self.translation_capture: MicrophoneCapture | None = None
         self.translation_queue: queue.Queue[bytes | None] | None = None
         self.pipeline_thread: threading.Thread | None = None
+        self.live_translate_session: QwenLiveTranslate | None = None
+        self.live_translate_session_key: tuple[Any, ...] | None = None
+        self.live_translate_session_lock = threading.Lock()
+        self.continuous_stop_event = threading.Event()
+        self.direct_key_held = False
+        self.switch_to_direct_after_continuous = False
         self.cancel_event = threading.Event()
         self.state_lock = threading.Lock()
         self.state = "idle"
@@ -670,7 +677,7 @@ class MainWindow(QMainWindow):
         self.zh_group = QGroupBox("中文 · 你的原文 / 老师译文")
         zh_layout = QVBoxLayout(self.zh_group)
         self.chinese_text = QPlainTextEdit()
-        self.chinese_text.setPlaceholderText("按住 F9 说中文，识别结果会实时显示在这里…")
+        self.chinese_text.setPlaceholderText("按住 F9，或开启持续翻译后直接说中文…")
         self.chinese_text.setReadOnly(True)
         zh_layout.addWidget(self.chinese_text)
         self.emotion_label = QLabel("识别情绪：—")
@@ -710,8 +717,14 @@ class MainWindow(QMainWindow):
         self.direct_button.setObjectName("directButton")
         self.translate_button = HoldButton("按住翻译说话\nF9")
         self.translate_button.setObjectName("translateButton")
+        self.continuous_f9_toggle = QCheckBox("F9 持续翻译\n按一次开启/关闭")
+        self.continuous_f9_toggle.setToolTip(
+            "开启后，按一次 F9 持续监听；服务端检测停顿并自动逐句翻译。"
+            "再按 F9、按 Esc 或按 F8 即停止。"
+        )
         controls.addWidget(self.direct_button, 2)
         controls.addWidget(self.translate_button, 2)
+        controls.addWidget(self.continuous_f9_toggle, 1)
         side = QVBoxLayout()
         self.play_button = QPushButton("播放/发送当前英文")
         self.teacher_button = QPushButton("▶ 开始听老师 / Teams")
@@ -838,7 +851,7 @@ class MainWindow(QMainWindow):
             "qwen3.5-livetranslate-flash-realtime-2026-05-19",
         ])
         self.live_voice_clone_mode = QComboBox()
-        self.live_voice_clone_mode.addItem("服务端复刻一次（推荐，无需上传样音）", "once")
+        self.live_voice_clone_mode.addItem("服务端复刻一次（推荐，首句校准）", "once")
         self.live_voice_clone_mode.addItem("不复刻，使用默认音色（最快）", "default")
         self.live_voice_clone_mode.addItem("每轮动态复刻（多人场景）", "always")
         self.live_voice_clone_mode.addItem("使用预先复刻的固定音色（高级）", "fixed")
@@ -859,8 +872,9 @@ class MainWindow(QMainWindow):
         live_hint = QLabel(
             "极速模式通过一个 WebSocket 直接完成中文识别、英文翻译和英文语音流式输出。"
             "请在 API Key 权限中授权 qwen3.5-livetranslate-flash-realtime。"
-            "推荐选择“服务端复刻一次”：直接按 F9 说话，服务端会从第一段语音自动复刻音色，"
-            "不需要提前上传录音。固定 voice_id 仅供已经拥有兼容音色的高级用户使用。"
+            "推荐选择“服务端复刻一次”：第一句用于建立音色校准，首句可能使用默认过渡音色，"
+            "第二句及后续会在同一连接中复用。会议页还可开启 F9 持续翻译，由服务端自动检测停顿。"
+            "固定 voice_id 仅供已经拥有兼容音色的高级用户使用。"
         )
         live_hint.setObjectName("hint")
         live_hint.setWordWrap(True)
@@ -1111,10 +1125,10 @@ class MainWindow(QMainWindow):
         return tab
 
     def _connect_signals(self) -> None:
-        self.signals.direct_down.connect(self.start_direct)
-        self.signals.direct_up.connect(self.stop_direct)
-        self.signals.translate_down.connect(self.start_translation)
-        self.signals.translate_up.connect(self.stop_translation_capture)
+        self.signals.direct_down.connect(self.handle_direct_down)
+        self.signals.direct_up.connect(self.handle_direct_up)
+        self.signals.translate_down.connect(self.handle_translate_down)
+        self.signals.translate_up.connect(self.handle_translate_up)
         self.signals.cancel.connect(self.cancel_all)
         self.signals.asr_preview.connect(self.update_asr_preview)
         self.signals.live_translation_preview.connect(self.update_live_translation_preview)
@@ -1128,10 +1142,11 @@ class MainWindow(QMainWindow):
         self.signals.test_finished.connect(self.on_test_finished)
         self.signals.clone_finished.connect(self.on_clone_finished)
         self.signals.summary_ready.connect(self.on_summary_ready)
-        self.direct_button.hold_pressed.connect(self.start_direct)
-        self.direct_button.hold_released.connect(self.stop_direct)
-        self.translate_button.hold_pressed.connect(self.start_translation)
-        self.translate_button.hold_released.connect(self.stop_translation_capture)
+        self.signals.continuous_finished.connect(self.on_continuous_translation_finished)
+        self.direct_button.hold_pressed.connect(self.handle_direct_down)
+        self.direct_button.hold_released.connect(self.handle_direct_up)
+        self.translate_button.hold_pressed.connect(self.handle_translate_down)
+        self.translate_button.hold_released.connect(self.handle_translate_up)
         self.stop_button.clicked.connect(self.cancel_all)
         self.play_button.clicked.connect(self.play_current_english)
         self.teacher_button.clicked.connect(self.toggle_teacher_caption)
@@ -1157,6 +1172,7 @@ class MainWindow(QMainWindow):
         )
         self.translation_engine.currentIndexChanged.connect(self.update_translation_engine_ui)
         self.live_voice_clone_mode.currentIndexChanged.connect(self.update_translation_engine_ui)
+        self.continuous_f9_toggle.toggled.connect(self.on_continuous_f9_setting_changed)
         self.glossary_button.clicked.connect(self.open_glossary_dialog)
         self.profile_load_button.clicked.connect(self.load_selected_profile)
         self.profile_save_button.clicked.connect(self.save_selected_profile)
@@ -1207,6 +1223,7 @@ class MainWindow(QMainWindow):
                 "live_translate_model": self.live_translate_model.currentText().strip(),
                 "live_voice_clone_mode": self.live_voice_clone_mode.currentData(),
                 "live_voice": self.live_voice.text().strip(),
+                "continuous_f9_enabled": self.continuous_f9_toggle.isChecked(),
                 "translation_model": self.translation_model.currentText(),
                 "summary_model": self.summary_model.currentText().strip(),
                 "source_language": "Chinese",
@@ -1272,6 +1289,7 @@ class MainWindow(QMainWindow):
         )
         self._select_data(self.live_voice_clone_mode, v.get("live_voice_clone_mode", "once"))
         self.live_voice.setText(v.get("live_voice", ""))
+        self.continuous_f9_toggle.setChecked(bool(v.get("continuous_f9_enabled", False)))
         self.translation_model.setCurrentText(v["translation_model"])
         self.summary_model.setCurrentText(v["summary_model"])
         self.translation_domain.setText(v["translation_domain"])
@@ -1323,6 +1341,7 @@ class MainWindow(QMainWindow):
     def update_translation_engine_ui(self, *_args) -> None:
         live = self.translation_engine.currentData() == "live"
         fixed_voice = live and self.live_voice_clone_mode.currentData() == "fixed"
+        continuous = live and self.continuous_f9_toggle.isChecked()
         if live:
             self._select_data(self.speak_mode, "auto")
         self.speak_mode.setEnabled(not live)
@@ -1330,8 +1349,11 @@ class MainWindow(QMainWindow):
             "极速模式会边生成边播放，因此固定为自动发送。" if live else ""
         )
         self.translate_button.setText(
-            "按住极速翻译说话\nF9" if live else "按住传统翻译说话\nF9"
+            "开启/关闭持续翻译\nF9"
+            if continuous
+            else ("按住极速翻译说话\nF9" if live else "按住传统翻译说话\nF9")
         )
+        self.continuous_f9_toggle.setEnabled(live)
         for control in (
             self.live_translate_model,
             self.live_voice_clone_mode,
@@ -1815,6 +1837,7 @@ class MainWindow(QMainWindow):
                 self.settings.set_api_key(self.api_key.text().strip())
                 self.api_key.clear()
             self.settings.update(self.current_settings())
+            self._discard_manual_live_session(graceful=True)
             self.apply_overlay_settings()
             self.apply_subtitle_display_mode()
             self.apply_theme()
@@ -1839,6 +1862,46 @@ class MainWindow(QMainWindow):
         )
         self.hotkeys.start()
 
+    def handle_direct_down(self) -> None:
+        self.direct_key_held = True
+        with self.state_lock:
+            state = self.state
+        if state in {"continuous", "continuous_stopping"}:
+            self.switch_to_direct_after_continuous = True
+            self.cancel_event.set()
+            self.stop_continuous_translation()
+            self._set_status("正在停止 F9 持续翻译并切换到 F8 原声…")
+            return
+        self.start_direct()
+
+    def handle_direct_up(self) -> None:
+        self.direct_key_held = False
+        self.switch_to_direct_after_continuous = False
+        self.stop_direct()
+
+    def handle_translate_down(self) -> None:
+        if self.continuous_f9_toggle.isChecked():
+            with self.state_lock:
+                state = self.state
+            if state in {"continuous", "continuous_stopping"}:
+                self.stop_continuous_translation()
+            else:
+                self.start_continuous_translation()
+            return
+        self.start_translation()
+
+    def handle_translate_up(self) -> None:
+        if not self.continuous_f9_toggle.isChecked():
+            self.stop_translation_capture()
+
+    def on_continuous_f9_setting_changed(self, checked: bool) -> None:
+        with self.state_lock:
+            active = self.state in {"continuous", "continuous_stopping"}
+        if active and not checked:
+            self.stop_continuous_translation()
+        self.settings.update({"continuous_f9_enabled": bool(checked)})
+        self.update_translation_engine_ui()
+
     def _can_begin(self, new_state: str) -> bool:
         with self.state_lock:
             if self.state != "idle":
@@ -1855,6 +1918,90 @@ class MainWindow(QMainWindow):
         self.direct_button.style().polish(self.direct_button)
         self.translate_button.style().unpolish(self.translate_button)
         self.translate_button.style().polish(self.translate_button)
+
+    def _live_session_signature(
+        self,
+        values: dict[str, Any],
+        client: BailianClient,
+        phrases: dict[str, str],
+    ) -> tuple[Any, ...]:
+        return (
+            client.workspace_id,
+            client.api_key,
+            values["live_translate_model"],
+            values["live_voice_clone_mode"],
+            values.get("live_voice", ""),
+            tuple(sorted(phrases.items())),
+        )
+
+    def _get_manual_live_session(
+        self,
+        values: dict[str, Any],
+        client: BailianClient,
+        phrases: dict[str, str],
+        on_audio: Callable[[bytes], None],
+    ) -> QwenLiveTranslate:
+        signature = self._live_session_signature(values, client, phrases)
+        stale: QwenLiveTranslate | None = None
+        with self.live_translate_session_lock:
+            session = self.live_translate_session
+            if (
+                session is not None
+                and (
+                    self.live_translate_session_key != signature
+                    or not session.opened.is_set()
+                    or bool(session.error_text)
+                )
+            ):
+                stale = session
+                session = None
+                self.live_translate_session = None
+                self.live_translate_session_key = None
+        if stale is not None:
+            stale.close()
+        if session is None:
+            session = QwenLiveTranslate(
+                api_key=client.api_key,
+                workspace_id=client.workspace_id,
+                model=values["live_translate_model"],
+                source_language="zh",
+                target_language="en",
+                phrases=phrases,
+                voice_mode=values["live_voice_clone_mode"],
+                voice=values.get("live_voice", ""),
+                audio_enabled=True,
+                on_source_preview=lambda text: self.signals.asr_preview.emit(text, "live"),
+                on_translation_preview=self.signals.live_translation_preview.emit,
+                on_audio=on_audio,
+                on_status=self.signals.status.emit,
+                on_error=lambda error: log.warning("LiveTranslate: %s", error),
+            )
+            session.start()
+            session.wait_ready()
+            with self.live_translate_session_lock:
+                self.live_translate_session = session
+                self.live_translate_session_key = signature
+        session.on_audio = on_audio
+        session.on_source_preview = lambda text: self.signals.asr_preview.emit(text, "live")
+        session.on_translation_preview = self.signals.live_translation_preview.emit
+        session.on_status = self.signals.status.emit
+        session.begin_turn()
+        return session
+
+    def _discard_manual_live_session(
+        self, expected: QwenLiveTranslate | None = None, *, graceful: bool = False
+    ) -> None:
+        with self.live_translate_session_lock:
+            session = self.live_translate_session
+            if expected is not None and session is not expected:
+                return
+            self.live_translate_session = None
+            self.live_translate_session_key = None
+        if session is not None:
+            if graceful:
+                session.finish(timeout=3.0)
+            else:
+                session.close()
 
     def _make_client(self, values: dict[str, Any] | None = None) -> BailianClient:
         values = values or self.current_settings()
@@ -2173,6 +2320,213 @@ class MainWindow(QMainWindow):
         if message and not self.cancel_event.is_set():
             self._set_status(message)
 
+    def start_continuous_translation(self) -> None:
+        values = self.current_settings()
+        if values.get("translation_engine") != "live":
+            self.tabs.setCurrentWidget(self.settings_tab)
+            self.show_error("F9 持续翻译仅支持“极速直译”引擎。")
+            return
+        if not self.settings.get_api_key() or not values["workspace_id"]:
+            self.tabs.setCurrentWidget(self.settings_tab)
+            self.show_error("请先在设置页填写 Workspace ID 和 API Key。")
+            return
+        if not self._can_begin("continuous"):
+            return
+
+        self._discard_manual_live_session(graceful=True)
+        self.cancel_event.clear()
+        self.continuous_stop_event.clear()
+        self.switch_to_direct_after_continuous = False
+        self.awaiting_confirmation = False
+        self.translation_queue = queue.Queue(maxsize=400)
+        self.chinese_text.clear()
+        self.english_text.clear()
+        self.overlay.set_texts("", "")
+
+        def enqueue(chunk: bytes) -> None:
+            if self.translation_queue is None:
+                return
+            try:
+                self.translation_queue.put_nowait(chunk)
+            except queue.Full:
+                try:
+                    self.translation_queue.get_nowait()
+                    self.translation_queue.put_nowait(chunk)
+                except (queue.Empty, queue.Full):
+                    pass
+
+        try:
+            self.translation_capture = MicrophoneCapture(
+                values["input_device"], enqueue, sample_rate=16000, block_ms=100
+            )
+            self.translation_capture.start()
+        except Exception as exc:
+            self.translation_capture = None
+            self.translation_queue = None
+            self._set_idle()
+            self.show_error(f"持续翻译麦克风启动失败：{exc}")
+            return
+
+        self.translate_button.setProperty("active", True)
+        self.translate_button.style().unpolish(self.translate_button)
+        self.translate_button.style().polish(self.translate_button)
+        self._set_status("F9 持续翻译已开启 · 直接说中文，停顿后自动翻译")
+        self.pipeline_thread = threading.Thread(
+            target=self._continuous_translation_worker,
+            args=(values,),
+            name="continuous-live-translation",
+            daemon=True,
+        )
+        self.pipeline_thread.start()
+
+    def stop_continuous_translation(self) -> None:
+        with self.state_lock:
+            if self.state == "continuous":
+                self.state = "continuous_stopping"
+            elif self.state != "continuous_stopping":
+                return
+        self.continuous_stop_event.set()
+        if self.translation_capture is not None:
+            self.translation_capture.stop()
+            self.translation_capture = None
+        if self.translation_queue is not None:
+            try:
+                self.translation_queue.put_nowait(None)
+            except queue.Full:
+                try:
+                    self.translation_queue.get_nowait()
+                    self.translation_queue.put_nowait(None)
+                except (queue.Empty, queue.Full):
+                    pass
+        self._set_status("正在结束 F9 持续翻译并处理最后一句…")
+
+    def _continuous_translation_worker(self, values: dict[str, Any]) -> None:
+        client = self._make_client(values)
+        terms = parse_json_list(values.get("translation_terms", ""), "术语表")
+        phrases = {item["source"]: item["target"] for item in terms}
+        devices = [values["teams_output_device"]]
+        if values["monitor_enabled"]:
+            devices.append(values["monitor_output_device"])
+
+        audio_queue: queue.Queue[bytes | None] = queue.Queue()
+        playback_errors: list[Exception] = []
+        playback_thread: threading.Thread | None = None
+        session: QwenLiveTranslate | None = None
+        result_count = 0
+        message = "F9 持续翻译已关闭"
+        self.tts_active.set()
+        try:
+            with MultiOutputPlayer(devices, 24000) as player:
+                def play_audio() -> None:
+                    failed = False
+                    while True:
+                        item = audio_queue.get()
+                        try:
+                            if item is None:
+                                return
+                            if not failed:
+                                player.write(item)
+                        except Exception as exc:
+                            failed = True
+                            playback_errors.append(exc)
+                        finally:
+                            audio_queue.task_done()
+
+                playback_thread = threading.Thread(
+                    target=play_audio,
+                    name="continuous-live-audio-output",
+                    daemon=True,
+                )
+                playback_thread.start()
+
+                def handle_result(result) -> None:
+                    nonlocal result_count
+                    result_count += 1
+                    self.last_translation = result.translated_text
+                    self.signals.translation_ready.emit(
+                        result.source_text,
+                        result.translated_text,
+                        result.first_audio_seconds or 0.0,
+                        "我 / F9 持续直译",
+                    )
+                    if values["live_voice_clone_mode"] == "once" and result_count == 1:
+                        self.signals.status.emit(
+                            "第 1 段翻译完成 · 音色校准已建立，后续句子会复用你的音色"
+                        )
+                    else:
+                        self.signals.status.emit(
+                            f"F9 持续翻译中 · 已完成 {result_count} 句，继续说即可"
+                        )
+
+                session = QwenLiveTranslate(
+                    api_key=client.api_key,
+                    workspace_id=client.workspace_id,
+                    model=values["live_translate_model"],
+                    source_language="zh",
+                    target_language="en",
+                    phrases=phrases,
+                    voice_mode=values["live_voice_clone_mode"],
+                    voice=values.get("live_voice", ""),
+                    audio_enabled=True,
+                    continuous=True,
+                    vad_threshold=float(values["vad_threshold"]),
+                    vad_silence_ms=int(values["vad_silence_ms"]),
+                    on_source_preview=lambda text: self.signals.asr_preview.emit(text, "live"),
+                    on_translation_preview=self.signals.live_translation_preview.emit,
+                    on_audio=audio_queue.put,
+                    on_result=handle_result,
+                    on_status=self.signals.status.emit,
+                    on_error=lambda error: log.warning("Continuous LiveTranslate: %s", error),
+                )
+                session.start()
+                session.wait_ready()
+                assert self.translation_queue is not None
+                while not self.cancel_event.is_set():
+                    chunk = self.translation_queue.get()
+                    if chunk is None:
+                        break
+                    session.send_audio(chunk)
+
+                if self.cancel_event.is_set():
+                    session.close()
+                else:
+                    session.finish(timeout=max(15.0, float(values["request_timeout"])))
+                session = None
+                audio_queue.put(None)
+                audio_queue.join()
+                playback_thread.join(timeout=1.0)
+                if playback_errors:
+                    raise ApiError(f"持续翻译音频播放失败：{playback_errors[0]}")
+        except Exception as exc:
+            log.exception("Continuous LiveTranslate failed")
+            message = f"F9 持续翻译已停止：{exc}"
+            if not self.cancel_event.is_set():
+                self.signals.error.emit(str(exc))
+        finally:
+            if session is not None:
+                session.close()
+            if playback_thread is not None and playback_thread.is_alive():
+                audio_queue.put(None)
+                audio_queue.join()
+                playback_thread.join(timeout=1.0)
+            self.tts_active.clear()
+            self.signals.continuous_finished.emit(message)
+
+    def on_continuous_translation_finished(self, message: str) -> None:
+        self.translation_capture = None
+        self.translation_queue = None
+        self.continuous_stop_event.clear()
+        self.translate_button.setProperty("active", False)
+        self.translate_button.style().unpolish(self.translate_button)
+        self.translate_button.style().polish(self.translate_button)
+        self._set_idle()
+        should_start_direct = self.switch_to_direct_after_continuous and self.direct_key_held
+        self.switch_to_direct_after_continuous = False
+        if should_start_direct:
+            self.start_direct()
+        elif not self.cancel_event.is_set():
+            self._set_status(message)
+
     def start_translation(self) -> None:
         if not self._can_begin("capturing"):
             return
@@ -2287,6 +2641,7 @@ class MainWindow(QMainWindow):
         playback_errors: list[Exception] = []
         playback_thread: threading.Thread | None = None
         session: QwenLiveTranslate | None = None
+        keep_session = False
         self.tts_active.set()
         try:
             with MultiOutputPlayer(devices, 24000) as player:
@@ -2311,24 +2666,7 @@ class MainWindow(QMainWindow):
                     daemon=True,
                 )
                 playback_thread.start()
-                session = QwenLiveTranslate(
-                    api_key=client.api_key,
-                    workspace_id=client.workspace_id,
-                    model=values["live_translate_model"],
-                    source_language="zh",
-                    target_language="en",
-                    phrases=phrases,
-                    voice_mode=values["live_voice_clone_mode"],
-                    voice=values.get("live_voice", ""),
-                    audio_enabled=True,
-                    on_source_preview=lambda text: self.signals.asr_preview.emit(text, "live"),
-                    on_translation_preview=self.signals.live_translation_preview.emit,
-                    on_audio=audio_queue.put,
-                    on_status=self.signals.status.emit,
-                    on_error=lambda error: log.warning("LiveTranslate: %s", error),
-                )
-                session.start()
-                session.wait_ready()
+                session = self._get_manual_live_session(values, client, phrases, audio_queue.put)
                 assert self.translation_queue is not None
                 while not self.cancel_event.is_set():
                     chunk = self.translation_queue.get()
@@ -2343,8 +2681,7 @@ class MainWindow(QMainWindow):
                     timeout=max(30.0, float(values["request_timeout"])),
                     cancel_event=self.cancel_event,
                 )
-                session.finish()
-                session = None
+                keep_session = True
 
                 audio_queue.put(None)
                 audio_queue.join()
@@ -2364,12 +2701,17 @@ class MainWindow(QMainWindow):
                     "我 / F9 极速直译",
                 )
                 if result.first_audio_seconds is not None:
-                    self.signals.status.emit(
-                        f"极速直译完成 · 松开 F9 后 {result.first_audio_seconds:.2f}s 开始出声"
-                    )
+                    if values["live_voice_clone_mode"] == "once" and session.completed_turns == 1:
+                        self.signals.status.emit(
+                            "第 1 段翻译完成 · 音色校准已建立；下一次 F9 会复用你的音色"
+                        )
+                    else:
+                        self.signals.status.emit(
+                            f"极速直译完成 · 松开 F9 后 {result.first_audio_seconds:.2f}s 开始出声"
+                        )
         finally:
-            if session is not None:
-                session.close()
+            if session is not None and not keep_session:
+                self._discard_manual_live_session(session)
             if self.cancel_event.is_set():
                 while True:
                     try:
@@ -2481,6 +2823,9 @@ class MainWindow(QMainWindow):
     def cancel_all(self) -> None:
         self.cancel_event.set()
         self.teacher_cancel_event.set()
+        self.switch_to_direct_after_continuous = False
+        self.direct_key_held = False
+        self.continuous_stop_event.set()
         if self.translation_capture is not None:
             self.translation_capture.stop()
             self.translation_capture = None
@@ -2495,6 +2840,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self.direct_bridge.stop()
+        self._discard_manual_live_session()
         if self.teacher_active:
             self.stop_teacher_caption()
         self._set_idle()
@@ -2718,7 +3064,7 @@ class MainWindow(QMainWindow):
                 detail = (
                     "百炼当前没有为 Qwen3.5 LiveTranslate 提供可用的预创建固定音色处理服务。\n\n"
                     "程序已自动切换为“服务端复刻一次”。现在无需上传录音，回到会议控制台后"
-                    "直接按住 F9 说话；服务端会从第一段语音自动复刻你的音色，并在本次会话中复用。"
+                    "直接按住 F9 说话；第一段建立音色校准，第二段及后续会在同一连接中复用。"
                 )
                 if cleanup_warning:
                     detail += f"\n\n注意：{cleanup_warning}"

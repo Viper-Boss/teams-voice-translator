@@ -55,6 +55,17 @@ class PayloadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_live_translate_session_update(voice_mode="fixed", voice="")
 
+    def test_live_translate_continuous_mode_uses_server_vad(self):
+        payload = build_live_translate_session_update(
+            continuous=True,
+            vad_threshold=0.15,
+            vad_silence_ms=700,
+        )
+        turn_detection = payload["session"]["turn_detection"]
+        self.assertEqual(turn_detection["type"], "server_vad")
+        self.assertEqual(turn_detection["threshold"], 0.15)
+        self.assertEqual(turn_detection["silence_duration_ms"], 700)
+
     def test_voice_clone_payload(self):
         payload = build_voice_clone_payload(
             target_model="qwen-audio-3.0-tts-flash",
