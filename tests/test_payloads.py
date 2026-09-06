@@ -3,9 +3,13 @@ import unittest
 from teams_voice_translator.api_payloads import (
     build_asr_session_update,
     build_live_translate_session_update,
+    build_qwen3_tts_http_payload,
+    build_qwen3_tts_realtime_session_update,
+    build_qwen_voice_clone_payload,
     build_translation_payload,
     build_tts_payload,
     build_voice_clone_payload,
+    cosyvoice_instruction_units,
     parse_json_list,
 )
 
@@ -35,6 +39,16 @@ class PayloadTests(unittest.TestCase):
         )
         self.assertEqual(payload["input"]["format"], "pcm")
         self.assertTrue(payload["input"]["text"].startswith("[amazed]"))
+
+    def test_cosyvoice_instruction_uses_official_weighted_limit(self):
+        self.assertEqual(cosyvoice_instruction_units("请用 English"), 4 + 8)
+        with self.assertRaisesRegex(ValueError, "100"):
+            build_tts_payload(
+                "Hello",
+                model="cosyvoice-v3.5-plus",
+                voice="voice-test",
+                instruction="请" * 51,
+            )
 
     def test_live_translate_push_to_talk_with_voice_clone(self):
         payload = build_live_translate_session_update(
@@ -95,6 +109,43 @@ class PayloadTests(unittest.TestCase):
                 "url": "https://example.com/a.wav",
             },
         )
+
+    def test_qwen3_voice_clone_uses_official_qwen_enrollment_schema(self):
+        payload = build_qwen_voice_clone_payload(
+            target_model="qwen3-tts-vc-realtime-2026-01-15",
+            preferred_name="my_voice",
+            audio_data="data:audio/wav;base64,UklGRg==",
+            language="zh",
+            transcript="这是我的样音。",
+        )
+        self.assertEqual(payload["model"], "qwen-voice-enrollment")
+        self.assertEqual(payload["input"]["action"], "create")
+        self.assertEqual(payload["input"]["preferred_name"], "my_voice")
+        self.assertEqual(payload["input"]["audio"]["data"], "data:audio/wav;base64,UklGRg==")
+        self.assertEqual(payload["input"]["text"], "这是我的样音。")
+
+    def test_qwen3_realtime_tts_uses_commit_mode_and_english(self):
+        payload = build_qwen3_tts_realtime_session_update(
+            voice="voice-123",
+            language="en",
+            rate=1.1,
+            pitch=0.95,
+        )
+        self.assertEqual(payload["type"], "session.update")
+        self.assertEqual(payload["session"]["mode"], "commit")
+        self.assertEqual(payload["session"]["language_type"], "English")
+        self.assertEqual(payload["session"]["speech_rate"], 1.1)
+
+    def test_qwen3_http_tts_binds_voice_and_model(self):
+        payload = build_qwen3_tts_http_payload(
+            "Hello",
+            model="qwen3-tts-vc-2026-01-22",
+            voice="voice-123",
+            language="en",
+        )
+        self.assertEqual(payload["model"], "qwen3-tts-vc-2026-01-22")
+        self.assertEqual(payload["input"]["voice"], "voice-123")
+        self.assertEqual(payload["input"]["language_type"], "English")
 
 
 if __name__ == "__main__":

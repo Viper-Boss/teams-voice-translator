@@ -11,7 +11,7 @@ from typing import Any
 
 import websocket
 
-from .aliyun import ApiError
+from .aliyun import ApiError, _websocket_proxy_options
 from .api_payloads import build_live_translate_session_update
 
 
@@ -47,6 +47,7 @@ class QwenLiveTranslate:
         on_result: Callable[[LiveTranslateResult], None] | None = None,
         on_status: Callable[[str], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        proxy: str = "",
     ) -> None:
         self.api_key = api_key
         self.workspace_id = workspace_id
@@ -82,6 +83,7 @@ class QwenLiveTranslate:
         self._committed_at: float | None = None
         self._turn_active = False
         self.completed_turns = 0
+        self.proxy = proxy.strip()
         self.ws: websocket.WebSocketApp | None = None
         self.thread: threading.Thread | None = None
 
@@ -101,8 +103,10 @@ class QwenLiveTranslate:
             on_error=self._on_error,
             on_close=self._on_close,
         )
+        run_options = {"ping_interval": 20, "ping_timeout": 10}
+        run_options.update(_websocket_proxy_options(self.proxy))
         self.thread = threading.Thread(
-            target=lambda: self.ws.run_forever(ping_interval=20, ping_timeout=10),
+            target=lambda: self.ws.run_forever(**run_options),
             name="qwen-live-translate-websocket",
             daemon=True,
         )

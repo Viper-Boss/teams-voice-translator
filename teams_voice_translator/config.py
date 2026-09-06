@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
     "input_device": None,
     "teams_output_device": None,
     "loopback_device": None,
+    "loopback_device_name": "",
     "monitor_enabled": False,
     "monitor_output_device": None,
     "direct_sample_rate": 48000,
@@ -33,14 +34,17 @@ DEFAULTS: dict[str, Any] = {
     "live_voice": "",
     "continuous_f9_enabled": False,
     "summary_model": "qwen-plus",
+    "long_form_model": "qwen-plus",
     "source_language": "Chinese",
     "target_language": "English",
     "translation_terms": "",
     "translation_memories": "",
     "translation_domain": "Education, academic discussion and online meetings",
     "confirm_before_speak": False,
+    "tts_provider": "aliyun",
     "tts_model": "qwen-audio-3.0-tts-flash",
     "voice": "loongjohn",
+    "tts_voices": {},
     "tts_sample_rate": 24000,
     "tts_volume": 55,
     "tts_rate": 1.0,
@@ -48,7 +52,13 @@ DEFAULTS: dict[str, Any] = {
     "tts_seed": 0,
     "tts_language_hint": "en",
     "tts_instruction": "Speak natural, clear conversational American English for an online lesson.",
+    "tts_pronunciations": "",
     "tts_emotion_tag": "",
+    "voicestudio_url": "http://127.0.0.1:3900",
+    "voicestudio_model": "tts-1",
+    "voicestudio_voice": "default",
+    "voicestudio_executable": "",
+    "voicestudio_install_dir": "",
     "enable_aigc_tag": False,
     "aigc_propagator": "",
     "aigc_propagate_id": "",
@@ -57,6 +67,8 @@ DEFAULTS: dict[str, Any] = {
     "cancel_hotkey": "esc",
     "request_timeout": 45,
     "http_proxy": "",
+    # "direct"=忽略系统/VPN代理直连国内；"system"=跟随系统；"manual"=使用 http_proxy
+    "proxy_mode": "direct",
     "oss_region": "cn-beijing",
     "oss_bucket": "",
     "overlay_enabled": False,
@@ -80,7 +92,13 @@ DEFAULTS: dict[str, Any] = {
     "active_profile": "",
     "translation_style": "polite",
     "speak_mode": "auto",
-    "theme": "light",
+    "theme": "shizuku",
+    "ui_layout": "crystal",
+    # Side-panel artwork, independent from layout and palette. "auto" follows
+    # the palette, "none" hides the panel, anything else is a key from
+    # backdrops.BACKDROP_LIBRARY.
+    "backdrop": "auto",
+    "ui_theme_revision": 4,
     "output_directory": "",
 }
 
@@ -106,6 +124,20 @@ class SettingsStore:
                         self.values[key] = value
                 if "speak_mode" not in loaded and loaded.get("confirm_before_speak"):
                     self.values["speak_mode"] = "confirm"
+                try:
+                    revision = int(loaded.get("ui_theme_revision", 0) or 0)
+                except (TypeError, ValueError):
+                    revision = 0
+                if revision < 4:
+                    # v1.11 replaces the former mixed-layout default with the
+                    # user-approved Crystal Aurora shell.  Reset the visual
+                    # choice once while preserving every API/audio/model value;
+                    # after migration the user may still select any of the 16
+                    # layout/palette combinations without another reset.
+                    self.values["ui_layout"] = "crystal"
+                    self.values["theme"] = "shizuku"
+                    self.values["ui_theme_revision"] = 4
+                    self.save()
         except (OSError, json.JSONDecodeError):
             pass
 

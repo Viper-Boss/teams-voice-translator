@@ -21,3 +21,6 @@ settings.json
 .vscode/
 Thumbs.db
 .DS_Store
+.workbuddy/
+# Personal CrystalDiskInfo/Shizuku artwork: local use only, never publish.
+teams_voice_translator/local_assets/

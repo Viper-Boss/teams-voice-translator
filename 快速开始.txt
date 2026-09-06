@@ -1,4 +1,4 @@
-Teams 双向课堂翻译 v1.2.4
+Teams 双向课堂翻译与答辩助手 v1.14.6
 =============================
 
 一、安装 VB-CABLE
@@ -7,7 +7,14 @@ Teams 双向课堂翻译 v1.2.4
 二、程序设置
 1. 运行 TeamsVoiceTranslator.exe。
 2. 填写百炼北京地域的 Workspace ID 和 API Key，并测试连通性。
-3. 确认业务空间已授权 qwen3.5-livetranslate-flash-realtime。
+3. 确认业务空间已授权：
+   - qwen3.5-livetranslate-flash-realtime（极速直译）
+   - qwen3-asr-flash-realtime（识别）
+   - qwen-mt-flash（翻译）
+   - qwen3-tts-vc-realtime-2026-01-15（实时 TTS）
+   - qwen3-tts-vc-2026-01-22（高清 TTS）
+   - qwen-voice-enrollment（Qwen3 声音复刻）
+   可选：fun-asr-realtime、qwen-audio-3.0-tts-plus、qwen-audio-3.0-tts-flash、cosyvoice-v3-flash、cosyvoice-v3.5-plus、voice-enrollment。
 4. 物理麦克风：选择你的真实麦克风。
 5. Teams 虚拟输出：选择 CABLE Input。
 6. 老师/Teams 系统声：选择与 Teams 扬声器相同的 [Loopback] 设备。
@@ -29,32 +36,42 @@ Teams 双向课堂翻译 v1.2.4
 首次使用请选择“服务端复刻一次（推荐，无需上传样音）”。第一段用于建立音色校准，可能暂时使用默认过渡音色；保持程序开启，第二段及后续会复用你的音色。
 百炼当前可能拒绝为 Qwen3.5 LiveTranslate 预创建固定音色；固定 voice_id 仅供已有兼容音色的高级用户使用。
 如需先确认、翻译记忆或表达风格，可切换“传统模式”。
-传统模式如需克隆普通 TTS 音色，可点击“创建克隆音色”，再配置 OSS 并选择本地录音；该 voice_id 不能用于 LiveTranslate。
+传统模式可选择 Qwen3-TTS-VC 实时版（低延迟）或高清版（更自然）作为 TTS 模型；两种模型需要分别创建克隆音色，程序会按模型自动保存和切换。
+传统模式也兼容 Qwen-Audio 和 CosyVoice；CosyVoice v3.5-plus 克隆最像本人。
+传统模式如需克隆音色，可点击“创建克隆音色”并选择本地录音；Qwen3 复刻不需要 OSS，Qwen-Audio/CosyVoice 需要配置 OSS。
 传统模式的“发送方式”可选择立即发送，或先确认/编辑。
 确认模式下修改英文后，点击“播放/发送当前英文”。
-历史记录双击一行可重新载入并重播。
+历史记录双击一行可重新载入并重播；点击每句后的 ▶ 可重播该句语音。
 
 六、键盘输入
 输入中文后按 Enter 翻译并发送。
 Ctrl+Enter 或 Shift+Enter 换行。
 
-七、录音
+七、使用 VoiceStudio 本地声音
+打开“本地声音工作台 → 运行管理”，可选择安装路径并自动下载安装，下载阶段会显示百分比。
+也可导入本地 MSI；程序会自动拉取 GitHub 最新版本和 SHA-256，一致显示绿色，不一致红色警告但允许人工确认后安装。“手动下载”会直达 GitHub 官方 Releases。
+同一页可安装、卸载、启动、停止、重启和升级，并查看已安装/API/最新版本及后台进程。正常进程显示绿色，API 异常显示红色。
+先在 VoiceStudio 内完成首次模型下载和声音克隆，再回本程序点“检测并同步”。
+选好模型和声音后先点“仅在本机试听”，确认无误再点“设为当前语音后端”。
+传统 F9、键盘发声、历史重播和整段朗读会使用本地声音；极速 F9 仍使用百炼实时音频。
+
+八、录音
 点击“开始录音”会保存三份 WAV：
 1. 你的麦克风；2. 老师/Teams 系统声；3. 双方混合会议。
 录制他人声音前请征得对方同意。
 
-八、字幕和总结
+九、字幕和总结
 字幕后台始终完整缓存中文、英文、说话人和时间。
 保存时可选语言，以及 SRT/TXT/WebVTT/Markdown/JSONL 等格式。
 “生成课堂总结”可整理知识点、老师回答、作业待办和术语。
 
-九、课程配置
+十、课程配置
 可用表格编辑专业术语，并按课程保存翻译领域、术语、表达风格、音色和 TTS 指令。
 
 完整说明见 README.md。
 
-十、版本与许可证
-当前版本：v1.2.4
+十一、版本与许可证
+当前版本：v1.14.6
 项目主页：https://github.com/Viper-Boss/teams-voice-translator
 本项目按 GNU GPL v3.0 or later 开源；分发修改版或衍生程序时，必须按兼容方式同时提供对应源代码。
 完整条款见 LICENSE。

@@ -24,6 +24,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\build.ps1
 ```
 
+答辩模式可运行 `.\run_defense.bat`，对应发行版使用 `.\build_defense.ps1` 构建。
+
 ## 提交规范
 
 1. 不要提交 API Key、Workspace ID、录音、字幕、日志或个人会议数据。

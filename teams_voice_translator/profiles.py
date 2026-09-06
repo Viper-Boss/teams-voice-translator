@@ -11,11 +11,34 @@ PROFILE_FIELDS = (
     "translation_terms",
     "translation_memories",
     "translation_style",
+    "long_form_model",
     "live_voice_clone_mode",
     "live_voice",
+    "tts_provider",
+    "tts_model",
+    "tts_voices",
+    "voicestudio_model",
+    "voicestudio_voice",
     "tts_instruction",
+    "tts_pronunciations",
     "voice",
 )
+
+PROFILE_FIELD_DEFAULTS: dict[str, Any] = {"tts_voices": {}}
+
+
+def _profile_field_value(values: dict[str, Any], field: str) -> Any:
+    """Read one profile field, normalising type and default per field."""
+    value = values.get(field, PROFILE_FIELD_DEFAULTS.get(field, ""))
+    if field == "tts_voices":
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(model): str(voice)
+            for model, voice in value.items()
+            if str(voice).strip()
+        }
+    return value
 
 
 class CourseProfileStore:
@@ -38,7 +61,8 @@ class CourseProfileStore:
         for name, values in raw.items():
             if isinstance(name, str) and name.strip() and isinstance(values, dict):
                 self.profiles[name.strip()] = {
-                    field: values.get(field, "") for field in PROFILE_FIELDS
+                    field: _profile_field_value(values, field)
+                    for field in PROFILE_FIELDS
                 }
 
     def save_file(self) -> None:
@@ -60,7 +84,9 @@ class CourseProfileStore:
         clean_name = name.strip()
         if not clean_name:
             raise ValueError("课程配置名称不能为空")
-        self.profiles[clean_name] = {field: values.get(field, "") for field in PROFILE_FIELDS}
+        self.profiles[clean_name] = {
+            field: _profile_field_value(values, field) for field in PROFILE_FIELDS
+        }
         self.save_file()
 
     def delete(self, name: str) -> bool:

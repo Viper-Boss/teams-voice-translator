@@ -1,19 +1,26 @@
-# Teams 双向课堂翻译 v1.2.4
+# Teams 双向课堂翻译与答辩助手 v1.14.6
+
+> **答辩模式（新）**：本机版本新增了面向论文答辩的精简实时翻译程序，带全场上下文记忆、
+> PPT 术语预习、克隆音色长连接合成和答辩前自检。入口 `run_defense.bat`，
+> 说明见 [答辩模式使用说明.md](答辩模式使用说明.md)。旧版功能保持不变（`run.bat`）。
 
 [![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 
-这是一个面向 Windows + Microsoft Teams 的本地双向课堂翻译器。程序通过阿里云百炼官方接口处理语音和文本，并使用 Windows WASAPI 回环捕获老师在 Teams 中的声音。
+这是一个面向 Windows + Microsoft Teams 的双向课堂翻译器。程序通过阿里云百炼官方接口处理实时识别与翻译，同时可在百炼云 TTS 和 VoiceStudio 本地 TTS 之间切换，并使用 Windows WASAPI 回环捕获老师在 Teams 中的声音。
 
 ## 下载
 
 - [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.2.4 更新记录](CHANGELOG.md#124---2026-08-03)
+- [查看 v1.14.6 更新记录](CHANGELOG.md#1146---2026-09-06)
 - [快速开始](快速开始.txt)
+- [交给下一位 AI 的接手总入口](AI_CONTINUATION_GUIDE.md)
 
 发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
+
+> v1.14.6 新增并强化论文答辩模式。个人主题素材由 `.gitignore` 排除，不包含在公开源码或发行包中。
 
 > 本项目不附带阿里云百炼额度、API Key、VB-CABLE 驱动或 Microsoft Teams。云端模型调用会产生相应费用。
 
@@ -29,11 +36,21 @@
 - 双向三轨录音：你的麦克风、老师系统声、双方混合会议各一份 WAV。
 - 完整时间轴：标记“我 / 老师”、中英文、时间和处理耗时，并支持搜索和双击重新载入。
 - 课程配置：按课程保存领域、术语、翻译记忆、表达风格、音色和 TTS 指令。
-- 一键本地声音复刻：直接选择 iPhone `M4A`、MP3、WAV 等录音，自动转换、临时上传、创建固定音色并清理样音。
+- 一键本地声音复刻：直接选择 iPhone `M4A`、MP3、WAV 等录音，自动转换、临时上传、创建固定音色并清理样音；Qwen3 复刻使用 Base64 直传，无需 OSS。
+- 多 TTS 引擎共存：Qwen3-TTS-VC 实时/高清、Qwen-Audio、CosyVoice 可按模型分别保存克隆音色。
+- VoiceStudio 本地声音工作台：连接本机 `localhost:3900`，管理安装路径、自动/手动安装、SHA-256 校验、启停重启升级卸载、版本与后台进程，并同步本地模型和克隆声音。
+- 云/本地统一语音路由：传统 F9、键盘发声、历史重播和双语整段朗读共用所选后端；选择 VoiceStudio 后，文字和样音无需上传云端 TTS。
+- 双语整段朗读台：粘贴中文讲稿后先通读全文并结合课程领域、术语表和翻译记忆生成连贯英文；长稿自动先提取全局语境再分批对齐翻译，准备过程可以取消。
+- 连续朗读优化：当前句播放时后台预合成下一句，并缓存已经合成的 PCM；重复播放和跳回已读句不再重复调用 TTS。
+- 讲稿校对：独立窗口支持逐句编辑、结合全文重译单句、TTS 专用发音词典、仅本机试听，以及中英文同步句/词高亮、实际总时长、暂停/继续、拖动和点击跳句；可导出双语 SRT、TXT 或 JSON 工程数据。
+- 历史句重播：时间轴每句后点击 ▶ 即可重新朗读。
 - 字幕导出：中文、英文或双语；SRT、TXT、WebVTT、Markdown、JSONL 或全部格式。
 - AI 课堂总结：知识点、老师回答、作业待办、术语和待确认问题。
 - 临时缓存恢复：程序异常退出后可在下次启动时恢复尚未保存的双语字幕。
-- 浅色/深色主题，以及可调透明度、字号和置顶状态的歌词式悬浮字幕。
+- 整个窗口按四张参考稿重建为水晶极光导航式、Fluent 命令中心、午夜三栏工作台和暖色双栏工作室；水晶极光的会议控制台、本地声音工作台和设置页现已统一为同一套极光顶栏、玻璃卡片、左侧功能导航和矢量图标体系。
+- 四套布局与冰川水晶蓝、午夜蓝黑、琥珀暖白、Fluent 云白四套配色完全独立，可自由组合为 16 种外观，而不是四张固定皮肤。
+- 顶部“云端引擎 / 本地引擎”按钮可在百炼云 TTS 与 VoiceStudio 本地 TTS 间快速切换，并与设置页同步。
+- 可调透明度、字号和置顶状态的歌词式悬浮字幕。
 
 ## 安装和启动
 
@@ -55,10 +72,36 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 - `qwen3.5-livetranslate-flash-realtime`：F9 极速中文语音直译英文字幕和语音。
 - `qwen3-asr-flash-realtime`：F8、老师字幕，以及极速直译的源语音转写。
-- `qwen-mt-flash`、`qwen-audio-3.0-tts-flash`：传统模式、键盘翻译及发声。
+- `fun-asr-realtime`：可选的阿里云 Fun-ASR 实时识别引擎。
+- `qwen-mt-flash`：传统模式机器翻译。
+- `qwen3-tts-vc-realtime-2026-01-15`：传统模式实时 TTS，低延迟。
+- `qwen3-tts-vc-2026-01-22`：键盘输入/重播高清 TTS，更自然。
+- `qwen-audio-3.0-tts-plus`、`qwen-audio-3.0-tts-flash`：旧版传统 TTS，保留系统音色和情绪标签。
+- `cosyvoice-v3-flash`、`cosyvoice-v3.5-plus`：CosyVoice 克隆合成，v3.5-plus 相似度最高。
+- `qwen-voice-enrollment`：Qwen3 声音复刻。
+- `voice-enrollment`：旧版 Qwen-Audio/CosyVoice 声音复刻。
 - `qwen-plus`：可选的课堂总结。
 
-极速直译首次使用请选择“服务端复刻一次（推荐，无需上传样音）”。v1.2.3 会在多次 F9 之间保留同一个 WebSocket：第一段用于建立音色校准，第一段输出可能短暂使用默认过渡音色，第二段及后续会在同一会话内复用你的音色。持续模式天然复用整场连接。百炼当前可能拒绝为 `qwen3.5-livetranslate-flash-realtime` 预创建固定音色；固定 `voice_id` 因此仅作为已有兼容音色用户的高级选项。普通 TTS 的 `voice_id` 不能直接复用。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+极速直译首次使用请选择“服务端复刻一次（推荐，无需上传样音）”。程序会在多次 F9 之间保留同一个 WebSocket：第一段用于建立音色校准，可能短暂使用默认过渡音色，第二段及后续会在同一会话内复用你的音色。持续模式天然复用整场连接。百炼当前可能拒绝为 `qwen3.5-livetranslate-flash-realtime` 预创建固定音色；固定 `voice_id` 因此仅作为已有兼容音色用户的高级选项。普通 TTS 的 `voice_id` 与 LiveTranslate 不能混用。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+
+选择 FunASR 时，课程术语会作为官方 `input.context` 动态上下文发送；程序还会启用 `heartbeat`，并在连接意外中断后于下一段音频自动重连。若你已有在百炼预创建的稳定热词表，也可在代码层传入 `vocabulary_id`。程序不会向 FunASR 发送仅 Qwen-Audio Streaming 支持的内联 `vocabulary`。
+
+## VoiceStudio 本地语音后端
+
+本机版已把 [debpalash/VoiceStudio](https://github.com/debpalash/VoiceStudio) 作为可选本地 TTS 服务接入。VoiceStudio 仍以独立本地进程运行，本程序通过它公开的 OpenAI 兼容接口调用；这种结构能复用它的模型管理、GPU 调度和声音档案，同时保留本程序的 Teams 音频路由、字幕与长文朗读界面。
+
+1. 打开“本地声音工作台 → 运行管理”，选择安装路径后点击“自动下载安装”；下载阶段会显示百分比。
+2. 已自行下载 MSI 时，可点“导入 MSI 安装包”。程序会拉取 GitHub 最新版本和官方 SHA-256：一致显示绿色；不一致显示红色风险警告，但保留人工确认安装。
+3. 也可点“手动下载（GitHub）”直达官方 Releases。安装、升级、卸载、启动、停止和重启都可在同一页完成。
+4. 首次启动按 VoiceStudio 向导准备本地环境、下载模型，并在其中克隆或设计声音。
+5. 切到“声音库与试听”，点击“刷新状态与声音库”，选择声音档案并先本机试听。
+6. 点击“设为当前语音后端”。传统 F9、键盘发声、历史重播和整段朗读随后都会走本机服务。
+
+运行管理页同时显示已安装版本、API 版本、GitHub 最新版本和后台进程明细。API 正常时进程为绿色；进程存在但 API 未就绪或异常时为红色。通过本程序启动或连接并同步的 VoiceStudio 会被纳入本次会话管理；关闭本程序时会显示逐个关闭后台进程的进度，处理完后才退出。
+
+默认地址是 `http://127.0.0.1:3900`，本地接口不要求真实 API Key。VoiceStudio 在 Windows 上支持 CPU 和 NVIDIA CUDA；AMD GPU 与 Ryzen AI NPU 在其 Windows 版本中目前走 CPU。首次安装和模型下载约需 10–20 GB 可用空间。极速 F9 使用百炼单模型直接返回英文音频，因此不会被本地 TTS 后端替换；如需本地声音，请把 F9 切换为传统流水线。
+
+VoiceStudio 本体按 AGPL-3.0 发布，下载的可选模型仍各自适用其模型许可证。本仓库没有复制或修改 VoiceStudio 源码，只调用其公开本地 API。卸载按钮只卸载应用程序，默认保留 `%APPDATA%\OmniVoice` 等声音、项目、模型和环境数据；彻底清理应在 VoiceStudio 的“设置 → 存储”中单独确认。
 
 ## 传统 TTS 一键本地声音复刻
 
@@ -184,6 +227,7 @@ meeting_mixed_时间.wav    双方混合会议
 - 开启 F8、老师字幕或传统 F9 时，对应音频会发送到百炼实时 ASR。
 - 极速 F9 会把中文音频发送到 Qwen3.5 LiveTranslate，并接收英文字幕和音频流。
 - 传统 F9 与双向文本会发送到 Qwen-MT；需要发声时英文会发送到 Qwen-Audio-TTS。
+- 若语音后端选择 VoiceStudio，传统 F9/键盘/重播/整段朗读的 TTS 文本只发送到用户配置的本地 VoiceStudio 地址；默认地址为本机回环接口。
 - 点击课堂总结时，本次双向字幕会发送到所选 Qwen 总结模型。
 - API Key 由 Windows 凭据管理器保存；日志不记录 API Key。
 - 使用本地声音复刻时，标准化后的短样音会临时上传到用户配置的私有 OSS，并通过短时签名 URL 提供给百炼；程序会在请求完成后尝试立即删除。

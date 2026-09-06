@@ -43,6 +43,50 @@ class SettingsTests(unittest.TestCase):
             self.assertNotIn("LTAI-test", raw)
             self.assertNotIn("never-write-this-secret", raw)
 
+    def test_old_light_theme_migrates_once_to_crystal_blue(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            path.write_text(json.dumps({"theme": "light"}), encoding="utf-8")
+            store = SettingsStore(Path(temp))
+            self.assertEqual(store.values["theme"], "shizuku")
+            self.assertEqual(store.values["ui_theme_revision"], 4)
+            self.assertEqual(store.values["ui_layout"], "crystal")
+
+    def test_legacy_explicit_theme_is_reset_to_approved_crystal_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "theme": "light",
+                        "ui_layout": "signal",
+                        "ui_theme_revision": 2,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store = SettingsStore(Path(temp))
+            self.assertEqual(store.values["theme"], "shizuku")
+            self.assertEqual(store.values["ui_layout"], "crystal")
+            self.assertEqual(store.values["ui_theme_revision"], 4)
+
+    def test_current_explicit_theme_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "theme": "light",
+                        "ui_layout": "signal",
+                        "ui_theme_revision": 4,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store = SettingsStore(Path(temp))
+            self.assertEqual(store.values["theme"], "light")
+            self.assertEqual(store.values["ui_layout"], "signal")
+
 
 if __name__ == "__main__":
     unittest.main()
