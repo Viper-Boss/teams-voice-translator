@@ -247,20 +247,44 @@ class DefenseUiTest(unittest.TestCase):
         self.assertEqual(reloaded.get("tts_volume"), 70)
         self.assertEqual(reloaded.get("tts_instruction"), "calm, confident academic English")
 
+    def test_instruction_presets_and_ambience_round_trip(self) -> None:
+        dialog = SettingsDialog(self.window, self.settings)
+        preset_index = dialog.instruction_preset_combo.findText("思考后回答 · 自然收尾")
+        self.assertGreaterEqual(preset_index, 0)
+        dialog.instruction_preset_combo.setCurrentIndex(preset_index)
+        self.assertIn("thoughtful", dialog.instruction_edit.text())
+        dialog.ambience_combo.setCurrentIndex(dialog.ambience_combo.findData("subtle"))
+        dialog._save()
+        reloaded = DefenseSettings(base_dir=Path(self._tmp.name))
+        self.assertIn("thoughtful", reloaded.get("tts_instruction"))
+        self.assertEqual(reloaded.get("ambience_mode"), "subtle")
+
+    def test_committee_device_hint_uses_saved_selection_while_idle(self) -> None:
+        self.settings.shared.update({"loopback_device_name": "Speakers B [Loopback]"})
+        self.window._on_state_changed("idle")
+        self.assertIn("已选择：Speakers B", self.window.committee_device_label.text())
+        self.assertNotIn("监听中", self.window.committee_device_label.text())
+
     def test_engine_tts_settings_use_expression_values(self) -> None:
-        self.settings.update(
-            {
-                "tts_voice_id": "voice-x",
-                "tts_rate": 0.9,
-                "tts_pitch": 0.85,
-                "tts_instruction": "calm and confident",
-            }
-        )
-        self.settings.shared.update({"workspace_id": "llm-demo"})
-        engine_settings = self.window.engine._tts_settings()
-        self.assertEqual(engine_settings["tts_rate"], 0.9)
-        self.assertEqual(engine_settings["tts_pitch"], 0.85)
-        self.assertEqual(engine_settings["tts_instruction"], "calm and confident")
+        keys = ("tts_voice_id", "tts_model", "tts_rate", "tts_pitch", "tts_instruction")
+        original = {key: self.settings.get(key) for key in keys}
+        try:
+            self.settings.update(
+                {
+                    "tts_voice_id": "voice-x",
+                    "tts_model": "cosyvoice-v3.5-plus",
+                    "tts_rate": 0.9,
+                    "tts_pitch": 0.85,
+                    "tts_instruction": "calm and confident",
+                }
+            )
+            self.settings.shared.update({"workspace_id": "llm-demo"})
+            engine_settings = self.window.engine._tts_settings()
+            self.assertEqual(engine_settings["tts_rate"], 0.9)
+            self.assertEqual(engine_settings["tts_pitch"], 0.85)
+            self.assertEqual(engine_settings["tts_instruction"], "calm and confident")
+        finally:
+            self.settings.update(original)
 
     def test_dialogs_construct(self) -> None:
         self.assertIsInstance(SelfCheckDialog(self.window, self.settings), SelfCheckDialog)
@@ -388,6 +412,52 @@ class DefenseUiTest(unittest.TestCase):
         dialog._toggle_loopback_lock()
         self.assertTrue(dialog.loopback_combo.isEnabled())
         self.assertEqual(dialog.loopback_lock_button.text(), "🔓 已解锁")
+        dialog.loopback_combo.setCurrentIndex(dialog.loopback_combo.findData(30))
+        dialog._toggle_loopback_lock()
+        self.assertFalse(dialog.loopback_combo.isEnabled())
+        self.assertEqual(dialog.loopback_combo.currentData(), 30, "重新锁定应保留刚选择的新设备")
+
+    def test_microphone_and_monitor_rows_are_locked_by_default(self) -> None:
+        from types import SimpleNamespace
+
+        inputs = [
+            SimpleNamespace(index=1, name="Microphone A"),
+            SimpleNamespace(index=2, name="Microphone B"),
+        ]
+        outputs = [
+            SimpleNamespace(index=7, name="CABLE Input (VB-Audio Virtual Cable)"),
+            SimpleNamespace(index=9, name="Headphones"),
+            SimpleNamespace(index=10, name="Speakers"),
+        ]
+        self.settings.shared.update({"input_device": 1})
+        self.settings.set("monitor_output_device", 9)
+        with patch("teams_voice_translator.defense.ui._safe_list_audio_devices", return_value=(inputs, outputs)), \
+             patch("teams_voice_translator.defense.ui._safe_list_loopback_devices", return_value=[]):
+            dialog = SettingsDialog(self.window, self.settings)
+        self.addCleanup(dialog.close)
+
+        self.assertFalse(dialog.mic_combo.isEnabled())
+        self.assertFalse(dialog.monitor_combo.isEnabled())
+        self.assertEqual(dialog.mic_lock_button.text(), "🔒 已锁定")
+        self.assertEqual(dialog.monitor_lock_button.text(), "🔒 已锁定")
+        self.assertEqual(dialog.mic_combo.currentData(), 1)
+        self.assertEqual(dialog.monitor_combo.currentData(), 9)
+
+        dialog._toggle_mic_lock()
+        dialog._toggle_monitor_lock()
+        self.assertTrue(dialog.mic_combo.isEnabled())
+        self.assertTrue(dialog.monitor_combo.isEnabled())
+        self.assertEqual(dialog.mic_lock_button.text(), "🔓 已解锁")
+        self.assertEqual(dialog.monitor_lock_button.text(), "🔓 已解锁")
+
+        dialog.mic_combo.setCurrentIndex(dialog.mic_combo.findData(2))
+        dialog.monitor_combo.setCurrentIndex(dialog.monitor_combo.findData(10))
+        dialog._toggle_mic_lock()
+        dialog._toggle_monitor_lock()
+        self.assertFalse(dialog.mic_combo.isEnabled())
+        self.assertFalse(dialog.monitor_combo.isEnabled())
+        self.assertEqual(dialog.mic_combo.currentData(), 2)
+        self.assertEqual(dialog.monitor_combo.currentData(), 10)
 
     def test_committee_loopback_hides_program_output_cable(self) -> None:
         from types import SimpleNamespace

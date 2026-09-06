@@ -50,6 +50,18 @@ class PayloadTests(unittest.TestCase):
                 instruction="请" * 51,
             )
 
+    def test_instruction_parameter_name_matches_model_family(self):
+        cosy = build_tts_payload(
+            "Hello", model="cosyvoice-v3.5-plus", voice="voice", instruction="Speak warmly."
+        )
+        qwen = build_tts_payload(
+            "Hello", model="qwen-audio-3.0-tts-plus", voice="voice", instruction="Speak warmly."
+        )
+        self.assertEqual(cosy["input"]["instruction"], "Speak warmly.")
+        self.assertNotIn("instructions", cosy["input"])
+        self.assertEqual(qwen["input"]["instructions"], "Speak warmly.")
+        self.assertNotIn("instruction", qwen["input"])
+
     def test_live_translate_push_to_talk_with_voice_clone(self):
         payload = build_live_translate_session_update(
             phrases={"有限元": "finite element method"},

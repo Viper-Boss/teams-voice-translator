@@ -12,6 +12,15 @@ SSML_MODELS = {
 }
 
 NATURAL_INSTRUCTION = "Speak naturally in English, with calm confidence, varied intonation and conversational pauses."
+INSTRUCTION_PRESETS = (
+    ("自动自然答辩（推荐）", ""),
+    ("平静自信 · 学术答辩", NATURAL_INSTRUCTION),
+    ("亲切交流 · 像面对面回答", "Speak like a real person in a face-to-face conversation: warm, relaxed, and spontaneous."),
+    ("思考后回答 · 自然收尾", "Sound thoughtful and responsive, with a brief reflective pause and natural sentence endings."),
+    ("强调重点 · 不要播音腔", "Use clear academic speech, naturally emphasizing key results without sounding like a narrator."),
+    ("简洁坚定 · 结论与贡献", "Speak concisely and firmly, with restrained emotion and a natural conversational rhythm."),
+    ("友好礼貌 · 有轻微情绪", "Speak warmly and politely, with subtle emotion, varied rhythm, and natural pauses."),
+)
 INSTRUCTION_MODELS = {
     "cosyvoice-v3.5-plus", "cosyvoice-v3.5-flash", "cosyvoice-v3-flash",
     "qwen-audio-3.0-tts-plus", "qwen-audio-3.0-tts-flash",
@@ -22,7 +31,9 @@ def speech_settings(settings, *, model=None, voice=None) -> dict:
     model = str(model or settings.get("tts_model", ""))
     mode = settings.get("speech_mode", "natural")
     instruction = str(settings.get("tts_instruction", "") or "").strip()
-    if not instruction and mode == "natural" and model in INSTRUCTION_MODELS:
+    if model not in INSTRUCTION_MODELS:
+        instruction = ""
+    elif not instruction and mode == "natural":
         instruction = NATURAL_INSTRUCTION
     return {
         "tts_model": model,

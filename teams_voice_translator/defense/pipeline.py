@@ -25,6 +25,7 @@ from .settings import DefenseSettings
 from .translator import ContextTranslator, SentenceSplitter
 from .tts_session import TtsHttpSession, TtsSession, create_tts_session
 from .speech_policy import speech_settings, speech_chunks, SPEECH_SAMPLE_RATE
+from .ambience import RoomTone
 
 STATE_IDLE = "idle"  # 未开始
 STATE_STARTING = "starting"  # 正在打开答辩通道
@@ -144,6 +145,8 @@ class DefenseEngine:
         self._speech_jobs: dict[str, _Job] = {}
         self._speech_generation = 0
         self._suppress_until = 0.0
+        self._room_tone = RoomTone(str(settings.get("ambience_mode", "off") or "off"))
+        self._ambience_cancel = threading.Event()
         self._closed = False
         self._stopping = False
 
@@ -271,6 +274,7 @@ class DefenseEngine:
 
     def interrupt_speech(self) -> None:
         """Esc: silence the current and queued speech immediately."""
+        self._ambience_cancel.set()
         with self._job_lock:
             self._speech_generation += 1
             self._playback_cancel.set()
@@ -359,6 +363,7 @@ class DefenseEngine:
         self._suppress_until = time.monotonic() + duration + 0.6
         self.callbacks.on_tts_sentence_started(text, cached.zh)
         self.callbacks.on_tts_sentence_duration(text, duration)
+        room_tone = RoomTone(str(self.settings.get("ambience_mode", "off") or "off"))
         def write_loop() -> None:
             try:
                 with self._player_lock:
@@ -369,9 +374,14 @@ class DefenseEngine:
                         if self.player is None:
                             return
                         try:
-                            self.player.write(cached.pcm[offset:offset + block])
+                            self.player.write(room_tone.mix(cached.pcm[offset:offset + block]))
                         except Exception:
                             self._recover_player(b"")
+                    tail = room_tone.tail()
+                    for offset in range(0, len(tail), block):
+                        if token.is_set() or self._closed or self.player is None:
+                            return
+                        self.player.write(tail[offset:offset + block])
             except Exception as exc:
                 self.callbacks.on_error(f"本地重播播放失败：{exc}")
             else:
@@ -644,6 +654,7 @@ class DefenseEngine:
             return
         if self._listening:
             self._stop_listening()
+        self._ambience_cancel.set()
         self._resume_listening_after_direct = False
         self.bridge = DirectAudioBridge()
         self.bridge.start(
@@ -833,12 +844,14 @@ class DefenseEngine:
         if self._live_utterance is not None and pcm:
             self._live_utterance["buf"].extend(pcm)
         if pcm:
+            room_tone = self._current_room_tone()
+            output_pcm = room_tone.mix(pcm)
             with self._player_lock:
                 player = self.player
                 if player is None:
                     return
                 try:
-                    player.write(pcm)
+                    player.write(output_pcm)
                 except Exception:
                     # 死流绝不再写第二次（PortAudio 会在原生层崩溃）：关旧流、重建、重放本块。
                     self._recover_player(b"")
@@ -863,6 +876,7 @@ class DefenseEngine:
             raise ApiError("播放设备不可用，请检查输出设备后重播") from exc
 
     def _on_first_audio(self, text: str) -> None:
+        self._ambience_cancel.clear()
         job = self._speech_jobs.get(text)
         if job is not None and job.first_audio_at is None:
             job.first_audio_at = time.monotonic()
@@ -879,14 +893,42 @@ class DefenseEngine:
         self.callbacks.on_tts_sentence_started(text, job.source if job is not None else "")
 
     def _on_utterance_done(self, text: str, total_bytes: int) -> None:
-        self._speech_jobs.pop(text, None)
+        job = self._speech_jobs.pop(text, None)
+        more_in_same_answer = job is not None and any(item is job for item in self._speech_jobs.values())
         holder = self._live_utterance
         if holder is not None and holder.get("text") == text and holder["buf"]:
             self._store_pcm(text, bytes(holder["buf"]), str(holder.get("zh", "")))
         self._live_utterance = None
+        if total_bytes > 0:
+            self._write_ambience_tail(140 if more_in_same_answer else None)
         sample_rate = SPEECH_SAMPLE_RATE
         seconds = total_bytes / max(sample_rate * 2, 1)
         self.callbacks.on_tts_sentence_duration(text, seconds)
+
+    def _current_room_tone(self) -> RoomTone:
+        mode = str(self.settings.get("ambience_mode", "off") or "off")
+        if self._room_tone.mode != mode:
+            self._room_tone = RoomTone(mode, sample_rate=SPEECH_SAMPLE_RATE)
+        return self._room_tone
+
+    def _write_ambience_tail(self, duration_ms: int | None = None) -> None:
+        room_tone = self._current_room_tone()
+        tail = room_tone.tail(duration_ms)
+        if not tail:
+            return
+        block = SPEECH_SAMPLE_RATE * 2 // 25
+        with self._player_lock:
+            for offset in range(0, len(tail), block):
+                if self._ambience_cancel.is_set() or self._closed or self.player is None:
+                    return
+                try:
+                    self.player.write(tail[offset:offset + block])
+                except Exception:
+                    # 环境音收尾与正文使用相同的死流恢复路径，避免设备刚释放时
+                    # 继续写入已失效的 PortAudio 流而触发原生层闪退。
+                    self._recover_player(b"")
+                    return
+                self._suppress_until = time.monotonic() + 0.6
 
     def _store_pcm(self, text: str, pcm: bytes, zh: str = "") -> None:
         # 同文本覆盖旧缓存（模型/参数可能已变）；超上限时按最旧淘汰。

@@ -300,7 +300,8 @@ def build_tts_payload(
         "enable_aigc_tag": bool(enable_aigc_tag),
     }
     if instruction.strip():
-        payload_input["instruction"] = instruction.strip()
+        parameter = "instructions" if model.startswith("qwen-audio-3.0-tts") else "instruction"
+        payload_input[parameter] = instruction.strip()
     if enable_ssml:
         payload_input["enable_ssml"] = True
     if enable_aigc_tag and aigc_propagator.strip():

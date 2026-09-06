@@ -20,6 +20,7 @@ DEFENSE_DEFAULTS: dict[str, Any] = {
     "tts_rate": 1.0,
     "tts_pitch": 1.0,
     "tts_instruction": "",
+    "ambience_mode": "off",
     "tts_language_hint": "en",
     "tts_sample_rate": 24000,
     "asr_model": "qwen3-asr-flash-realtime",

@@ -58,7 +58,11 @@ from .settings import DefenseSettings
 from .translator import ContextTranslator
 from .tts_session import create_tts_session
 from .speech_policy import (speech_settings, NATURAL_INSTRUCTION, INSTRUCTION_MODELS,
-                            SPEECH_SAMPLE_RATE, pause_comparison_text)
+                            INSTRUCTION_PRESETS, SPEECH_SAMPLE_RATE, pause_comparison_text)
+from .ambience import AMBIENCE_PRESETS
+
+
+CUSTOM_INSTRUCTION = "__custom__"
 
 
 def _safe_list_audio_devices() -> tuple[list, list]:
@@ -725,6 +729,13 @@ class DefenseWindow(QMainWindow):
         self._active_loopback_name = name
         self.committee_device_label.setText(f"监听中：{name}")
 
+    def _show_selected_committee_device(self) -> None:
+        name = str(self.settings.shared.get("loopback_device_name", "") or "").strip()
+        self._active_loopback_name = ""
+        self.committee_device_label.setText(
+            f"已选择：{name}（开始答辩后监听）" if name else ""
+        )
+
     # -------------------------------------------------------------- hotkeys
     def start_hotkeys(self) -> None:
         if self.hotkeys is not None:
@@ -814,6 +825,7 @@ class DefenseWindow(QMainWindow):
         if state == "idle":
             self._input_mode = None
             self._held_inputs.clear()
+            self._show_selected_committee_device()
         self._set_pill(state)
         self.start_button.setChecked(state != "idle")
         self.start_button.setText("结束答辩" if state != "idle" else "开始答辩")
@@ -997,6 +1009,11 @@ class DefenseWindow(QMainWindow):
             QMessageBox.critical(self, "设置", f"设置页打开失败：{exc}")
             return
         if dialog.exec() == QDialog.Accepted:
+            selected = str(self.settings.shared.get("loopback_device_name", "") or "").strip()
+            self.committee_device_label.setText(
+                f"正在切换：{selected}" if selected and self.engine.state != "idle"
+                else (f"已选择：{selected}（开始答辩后监听）" if selected else "")
+            )
             try:
                 self.engine.apply_settings()
             except Exception as exc:
@@ -2384,12 +2401,43 @@ class SettingsDialog(QDialog):
         self.volume_spin.setToolTip("会议里偏小就调高；对高清模型不生效")
         left_form.addRow("音量", self.volume_spin)
 
-        self.instruction_edit = QLineEdit(str(settings.get("tts_instruction", "")))
+        current_instruction = str(settings.get("tts_instruction", "") or "").strip()
+        self.instruction_preset_combo = NoWheelComboBox()
+        for label, instruction in INSTRUCTION_PRESETS:
+            self.instruction_preset_combo.addItem(label, instruction)
+        self.instruction_preset_combo.addItem("自定义指令…", CUSTOM_INSTRUCTION)
+        preset_index = self.instruction_preset_combo.findData(current_instruction)
+        if preset_index < 0:
+            preset_index = self.instruction_preset_combo.findData(CUSTOM_INSTRUCTION)
+        self.instruction_preset_combo.setCurrentIndex(preset_index)
+        left_form.addRow("语气风格", self.instruction_preset_combo)
+
+        self.instruction_edit = QLineEdit(current_instruction)
         self.instruction_edit.setPlaceholderText(
-            "仅 CosyVoice 生效：用一句英文描述语气，如 calm, confident, natural academic English（限 100 字符单位）"
+            "自然模式留空会使用推荐语气；也可输入英文自定义指令（CosyVoice 限 100 字符单位）"
         )
-        self.instruction_edit.setPlaceholderText("自然模式留空：自动使用平静、自信、有抑扬的英语语气（支持的模型生效）")
         left_form.addRow("语气指令", self.instruction_edit)
+        self.instruction_note = QLabel("")
+        self.instruction_note.setWordWrap(True)
+        left_form.addRow("", self.instruction_note)
+        self.instruction_preset_combo.currentIndexChanged.connect(self._apply_instruction_preset)
+        self.instruction_edit.textEdited.connect(self._mark_instruction_custom)
+        self.tts_model_combo.currentIndexChanged.connect(self._update_instruction_support)
+        self._update_instruction_support()
+
+        self.ambience_combo = NoWheelComboBox()
+        for key, preset in AMBIENCE_PRESETS.items():
+            self.ambience_combo.addItem(preset.label, key)
+        ambience_mode = str(settings.get("ambience_mode", "off") or "off")
+        self.ambience_combo.setCurrentIndex(max(0, self.ambience_combo.findData(ambience_mode)))
+        left_form.addRow("背景环境", self.ambience_combo)
+        ambience_note = QLabel(
+            "在英文语音下混入极轻的合成房间底噪，并在句尾自然淡出，避免像录音一样突然切成绝对静音。"
+            "它不是音乐；正式答辩建议先选“极轻”，会议软件强降噪时可能听不见。"
+        )
+        ambience_note.setWordWrap(True)
+        ambience_note.setStyleSheet(f"color: {TEXT_DIM};")
+        left_form.addRow("", ambience_note)
         self.speech_mode_combo = NoWheelComboBox()
         self.speech_mode_combo.addItem("自然度优先 · 完整翻译 + 音频缓冲", "natural")
         self.speech_mode_combo.addItem("低延迟 · 分句流式发声", "streaming")
@@ -2462,7 +2510,14 @@ class SettingsDialog(QDialog):
             self.mic_combo, inputs, settings.shared.get("input_device"),
             allow_default="系统默认输入", direction="输入",
         )
-        right_form.addRow("麦克风", self.mic_combo)
+        self.mic_locked = True
+        self.mic_lock_button = QPushButton("🔒 已锁定")
+        self.mic_lock_button.setFixedWidth(92)
+        self.mic_lock_button.clicked.connect(self._toggle_mic_lock)
+        mic_lock_row = QHBoxLayout()
+        mic_lock_row.addWidget(self.mic_lock_button)
+        mic_lock_row.addWidget(self.mic_combo, 1)
+        right_form.addRow("麦克风", mic_lock_row)
         self.cable_combo = NoWheelComboBox()
         self.cable_note = QLabel("")
         self.cable_lock_button = QPushButton("🔒 已锁定")
@@ -2494,6 +2549,7 @@ class SettingsDialog(QDialog):
                 if low in self.loopback_combo.itemText(index).lower():
                     self.loopback_combo.setCurrentIndex(index)
                     break
+        self.loopback_locked_index = self.loopback_combo.currentData()
         loopback_lock_row = QHBoxLayout()
         self.loopback_lock_button = QPushButton("🔒 已锁定")
         self.loopback_lock_button.setFixedWidth(92)
@@ -2502,6 +2558,7 @@ class SettingsDialog(QDialog):
         loopback_lock_row.addWidget(self.loopback_combo, 1)
         right_form.addRow("对方声音回环（对方声音从哪个设备播就选哪个）", loopback_lock_row)
         right_form.addRow("", self.loopback_note)
+        self._apply_loopback_lock_state()
         self.monitor_check = QCheckBox("本机试听（戴耳机防止回声）")
         self.monitor_check.setChecked(bool(settings.get("monitor_enabled", True)))
         right_form.addRow("", self.monitor_check)
@@ -2510,7 +2567,16 @@ class SettingsDialog(QDialog):
             self.monitor_combo, outputs, settings.get("monitor_output_device"),
             allow_default="系统默认输出", direction="输出",
         )
-        right_form.addRow("试听设备", self.monitor_combo)
+        self.monitor_locked = True
+        self.monitor_lock_button = QPushButton("🔒 已锁定")
+        self.monitor_lock_button.setFixedWidth(92)
+        self.monitor_lock_button.clicked.connect(self._toggle_monitor_lock)
+        monitor_lock_row = QHBoxLayout()
+        monitor_lock_row.addWidget(self.monitor_lock_button)
+        monitor_lock_row.addWidget(self.monitor_combo, 1)
+        right_form.addRow("试听设备", monitor_lock_row)
+        self._apply_mic_lock_state()
+        self._apply_monitor_lock_state()
 
         glossary_caption = QLabel("强制术语表（中 → 英，翻译时逐字一致）")
         layout.addWidget(glossary_caption)
@@ -2779,23 +2845,87 @@ class SettingsDialog(QDialog):
             self.api_key_hint.setStyleSheet(f"color: {ERR_RED};")
 
     def _toggle_loopback_lock(self) -> None:
+        if not self.loopback_locked:
+            self.loopback_locked_index = self.loopback_combo.currentData()
         self.loopback_locked = not self.loopback_locked
         self._apply_loopback_lock_state()
 
+    def _apply_instruction_preset(self, _index: int = -1) -> None:
+        instruction = self.instruction_preset_combo.currentData()
+        if instruction != CUSTOM_INSTRUCTION:
+            self.instruction_edit.setText(str(instruction or ""))
+
+    def _mark_instruction_custom(self, _text: str) -> None:
+        index = self.instruction_preset_combo.findData(CUSTOM_INSTRUCTION)
+        if index >= 0 and self.instruction_preset_combo.currentIndex() != index:
+            self.instruction_preset_combo.blockSignals(True)
+            self.instruction_preset_combo.setCurrentIndex(index)
+            self.instruction_preset_combo.blockSignals(False)
+
+    def _update_instruction_support(self, _index: int = -1) -> None:
+        model = str(self.tts_model_combo.currentData() or "")
+        supported = model in INSTRUCTION_MODELS
+        self.instruction_preset_combo.setEnabled(supported)
+        self.instruction_edit.setEnabled(supported)
+        if supported:
+            self.instruction_note.setText(
+                "该模型支持自然语言语气控制。预设只改变发声风格，不修改译文；自定义内容会原样发送。"
+            )
+            self.instruction_note.setStyleSheet(f"color: {OK_GREEN};")
+        else:
+            self.instruction_note.setText(
+                "当前模型不支持本工具的语气指令，已保存的内容会保留但不会发送。"
+            )
+            self.instruction_note.setStyleSheet(f"color: {TEXT_DIM};")
+
+    @staticmethod
+    def _apply_device_lock_state(combo: QComboBox, button: QPushButton, locked: bool, label: str) -> None:
+        combo.setEnabled(not locked)
+        if locked:
+            combo.setStyleSheet("QComboBox { color: #ffd400; font-weight: 600; }")
+            button.setText("🔒 已锁定")
+            button.setToolTip(f"当前已锁定，点击解锁更换{label}")
+        else:
+            combo.setStyleSheet("")
+            button.setText("🔓 已解锁")
+            button.setToolTip(f"当前已解锁，选择{label}后点击重新锁定")
+
+    def _toggle_mic_lock(self) -> None:
+        self.mic_locked = not self.mic_locked
+        self._apply_mic_lock_state()
+
+    def _apply_mic_lock_state(self) -> None:
+        self._apply_device_lock_state(
+            self.mic_combo, self.mic_lock_button, self.mic_locked, "麦克风"
+        )
+
+    def _toggle_monitor_lock(self) -> None:
+        self.monitor_locked = not self.monitor_locked
+        self._apply_monitor_lock_state()
+
+    def _apply_monitor_lock_state(self) -> None:
+        self._apply_device_lock_state(
+            self.monitor_combo, self.monitor_lock_button, self.monitor_locked, "试听设备"
+        )
+
     def _apply_loopback_lock_state(self) -> None:
         if self.loopback_locked:
-            if self.active_loopback_name:
+            position = self.loopback_combo.findData(self.loopback_locked_index)
+            if position >= 0:
+                self.loopback_combo.setCurrentIndex(position)
+            elif self.active_loopback_name:
                 low = self.active_loopback_name.lower()
                 for index in range(self.loopback_combo.count()):
                     if low in self.loopback_combo.itemText(index).lower():
                         self.loopback_combo.setCurrentIndex(index)
+                        self.loopback_locked_index = self.loopback_combo.currentData()
                         break
             self.loopback_combo.setEnabled(False)
             self.loopback_combo.setStyleSheet("QComboBox { color: #ffd400; font-weight: 600; }")
             self.loopback_lock_button.setText("🔒 已锁定")
             self.loopback_lock_button.setToolTip("当前已锁定，点击解锁手动选择")
             self.loopback_note.setText(
-                f"✅ 已锁定实际监听设备：{self.active_loopback_name or '（开始答辩后自动标出）'}"
+                f"✅ 已锁定实际监听设备：{self.loopback_combo.currentText() or '（开始答辩后自动标出）'}"
             )
             self.loopback_note.setStyleSheet(f"color: {OK_GREEN};")
         else:
@@ -2917,6 +3047,7 @@ class SettingsDialog(QDialog):
                 "tts_pitch": self.pitch_spin.value(),
                 "tts_volume": self.volume_spin.value(),
                 "tts_instruction": self.instruction_edit.text().strip(),
+                "ambience_mode": str(self.ambience_combo.currentData() or "off"),
                 "speech_mode": self.speech_mode_combo.currentData(),
                 "output_directory": self.output_dir_edit.text().strip(),
                 "direct_hotkey": str(self.direct_hotkey_combo.currentData()),

@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import tempfile
 from unittest.mock import patch
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 from teams_voice_translator.defense.ui import DefenseWindow, SettingsDialog, VoiceCompareDialog, CloneVoiceDialog, RehearsalDialog
 from teams_voice_translator.defense.settings import DefenseSettings
 app=QApplication([])
@@ -29,7 +29,8 @@ with tempfile.TemporaryDirectory() as tmp, patch('teams_voice_translator.defense
  window.mic_preview.setText('物理约束能够帮助保持预测的一致性，即使测量中存在噪声。')
  app.processEvents();window.grab().save(str(out/'main-demo.png'))
  window.focus_check.setChecked(True);app.processEvents();window.grab().save(str(out/'focus-demo.png'))
- dialog=SettingsDialog(window,settings);dialog.show();app.processEvents();dialog.grab().save(str(out/'settings.png'));dialog.close()
+ dialog=SettingsDialog(window,settings);dialog.show();app.processEvents();dialog.grab().save(str(out/'settings.png'))
+ settings_scroll=dialog.findChild(QScrollArea);settings_scroll.verticalScrollBar().setValue(settings_scroll.verticalScrollBar().maximum());app.processEvents();dialog.grab().save(str(out/'settings-lower.png'));dialog.close()
  compare=VoiceCompareDialog(window,settings);compare.show();app.processEvents()
  compare._show_progress(compare._cancel,compare.text_edit.toPlainText(),.45)
  app.processEvents();compare.grab().save(str(out/'voice-compare.png'))
@@ -45,7 +46,6 @@ with tempfile.TemporaryDirectory() as tmp, patch('teams_voice_translator.defense
   clone=CloneVoiceDialog(window,settings,'cosyvoice-v3.5-plus')
   clone._set_sample(Path('studio-demo.wav'),35.25)
   clone.show();app.processEvents()
-  from PySide6.QtWidgets import QScrollArea
   clone.findChild(QScrollArea).ensureWidgetVisible(clone.sample_options)
   app.processEvents();clone.grab().save(str(out/'clone-options.png'));clone.close()
  window.close()

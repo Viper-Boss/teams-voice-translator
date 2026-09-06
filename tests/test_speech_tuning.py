@@ -15,11 +15,23 @@ from xml.etree import ElementTree
 from teams_voice_translator.aliyun import ApiError, BailianClient
 from teams_voice_translator.defense.pipeline import DefenseEngine, EngineCallbacks
 from teams_voice_translator.defense.settings import DefenseSettings
-from teams_voice_translator.defense.speech_policy import pause_comparison_text, speech_settings, speech_chunks
+from teams_voice_translator.defense.speech_policy import (INSTRUCTION_PRESETS,
+    pause_comparison_text, speech_settings, speech_chunks)
+from teams_voice_translator.api_payloads import cosyvoice_instruction_units
 from teams_voice_translator.defense.tts_session import TtsLegacySession
 
 
 class SpeechTuningTests(unittest.TestCase):
+    def test_instruction_presets_fit_service_limit_and_unsupported_models_drop_them(self):
+        self.assertGreaterEqual(len(INSTRUCTION_PRESETS), 6)
+        for _label, instruction in INSTRUCTION_PRESETS:
+            self.assertLessEqual(cosyvoice_instruction_units(instruction), 100)
+        values = speech_settings({
+            "tts_model": "qwen3-tts-vc-2026-01-22",
+            "tts_instruction": "This must not be sent.",
+        })
+        self.assertEqual(values["tts_instruction"], "")
+
     def test_fragmented_pcm_preserves_every_sample(self):
         for mode in ("natural", "streaming"):
             with self.subTest(mode=mode):
