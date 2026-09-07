@@ -12,6 +12,7 @@ SSML_MODELS = {
 }
 
 NATURAL_INSTRUCTION = "Speak naturally in English, with calm confidence, varied intonation and conversational pauses."
+CHINESE_NATURAL_INSTRUCTION = "请用自然、平静、自信的中文口语朗读，保留真实停顿和语调变化。"
 INSTRUCTION_PRESETS = (
     ("自动自然答辩（推荐）", ""),
     ("平静自信 · 学术答辩", NATURAL_INSTRUCTION),
@@ -27,19 +28,23 @@ INSTRUCTION_MODELS = {
 }
 
 
-def speech_settings(settings, *, model=None, voice=None) -> dict:
+def speech_settings(settings, *, model=None, voice=None, language="en") -> dict:
     model = str(model or settings.get("tts_model", ""))
     mode = settings.get("speech_mode", "natural")
     instruction = str(settings.get("tts_instruction", "") or "").strip()
     if model not in INSTRUCTION_MODELS:
         instruction = ""
+    elif language == "zh":
+        # 英文答辩语气预设可能明确要求 English；朗读中文原稿时换成中文指令，
+        # 避免模型被相互冲突的语言要求影响发音和韵律。
+        instruction = CHINESE_NATURAL_INSTRUCTION if mode == "natural" else ""
     elif not instruction and mode == "natural":
         instruction = NATURAL_INSTRUCTION
     return {
         "tts_model": model,
         "voice": str(voice if voice is not None else settings.get("tts_voice_id", "")),
         "speech_mode": mode,
-        "tts_language_hint": "en",
+        "tts_language_hint": language,
         "tts_sample_rate": SPEECH_SAMPLE_RATE,
         "tts_volume": int(settings.get("tts_volume", 55)),
         "tts_rate": float(settings.get("tts_rate", 1.0)),

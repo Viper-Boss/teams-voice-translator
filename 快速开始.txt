@@ -1,4 +1,4 @@
-Teams 双向课堂翻译与答辩助手 v1.14.7
+Teams 双向课堂翻译与答辩助手 v1.14.8
 =============================
 
 一、安装 VB-CABLE
@@ -71,7 +71,7 @@ Ctrl+Enter 或 Shift+Enter 换行。
 完整说明见 README.md。
 
 十一、版本与许可证
-当前版本：v1.14.7
+当前版本：v1.14.8
 项目主页：https://github.com/Viper-Boss/teams-voice-translator
 本项目按 GNU GPL v3.0 or later 开源；分发修改版或衍生程序时，必须按兼容方式同时提供对应源代码。
 完整条款见 LICENSE。

@@ -109,6 +109,22 @@ class RehearsalPlaybackTests(unittest.TestCase):
         self.assertGreater(dialog.result_list.rowHeight(0), height)
         self.assertEqual(dialog.result_list.textElideMode(), Qt.ElideNone)
 
+    def test_chinese_source_can_be_read_without_translation(self):
+        dialog = RehearsalDialog(None, self.settings)
+        self.addCleanup(dialog.close)
+        source = '各位老师好，下面我将介绍本文的研究背景。首先说明研究问题。'
+        dialog.source_edit.setPlainText(source)
+        dialog.play_language_combo.setCurrentIndex(dialog.play_language_combo.findData('zh'))
+        self.assertIn('中文', dialog.play_button.text())
+        dialog._play_all()
+        self.spin(lambda: not dialog._play_thread.is_alive())
+        calls = self.client._stream_legacy_tts.call_args_list
+        spoken = ''.join(call.args[0] for call in calls)
+        self.assertIn('各位老师好', spoken)
+        self.assertEqual(calls[0].args[1]['tts_language_hint'], 'zh')
+        self.assertNotIn('English', calls[0].args[1]['tts_instruction'])
+        self.assertEqual(b''.join(self.player.parts), self.pcm * len(calls))
+
     def test_comparison_stop_targets_new_token_for_first_play_and_replay(self):
         dialog = VoiceCompareDialog(None, self.settings)
         self.addCleanup(dialog.close)

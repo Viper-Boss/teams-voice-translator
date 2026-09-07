@@ -3269,7 +3269,7 @@ class RehearsalDialog(QDialog):
         self._translations: list[str] = []
         layout = QVBoxLayout(self)
 
-        caption = QLabel("粘贴中文开场/讲稿 → 结合 PPT 背景整段连贯翻译 → 用克隆音色逐句朗读，练习到脱口而出。")
+        caption = QLabel("粘贴中文开场/讲稿 → 可结合 PPT 背景整段翻译 → 选择朗读中文原稿或英文译文，用克隆音色逐句练习。")
         caption.setWordWrap(True)
         layout.addWidget(caption)
 
@@ -3315,11 +3315,24 @@ class RehearsalDialog(QDialog):
         self.progress_label = QLabel("")
         layout.addWidget(self.progress_label)
 
+        play_options = QHBoxLayout()
+        play_options.addWidget(QLabel("朗读语言"))
+        self.play_language_combo = NoWheelComboBox()
+        self.play_language_combo.addItem("英文译文（答辩练习）", "en")
+        self.play_language_combo.addItem("中文原稿（语气检查）", "zh")
+        self.play_language_combo.currentIndexChanged.connect(self._on_play_language_changed)
+        play_options.addWidget(self.play_language_combo)
+        self.play_language_note = QLabel("英文需要先完成整段翻译")
+        self.play_language_note.setStyleSheet(f"color: {TEXT_DIM};")
+        play_options.addWidget(self.play_language_note)
+        play_options.addStretch(1)
+        layout.addLayout(play_options)
+
         buttons = QHBoxLayout()
         self.translate_button = QPushButton("① 整段连贯翻译")
         self.translate_button.clicked.connect(self._translate)
         buttons.addWidget(self.translate_button)
-        self.play_button = QPushButton("② 从头朗读")
+        self.play_button = QPushButton("② 从头朗读英文")
         self.play_button.clicked.connect(self._play_all)
         buttons.addWidget(self.play_button)
         self.pause_button = QPushButton("暂停")
@@ -3339,6 +3352,11 @@ class RehearsalDialog(QDialog):
         close_button.clicked.connect(self.reject)
         buttons.addWidget(close_button)
         layout.addLayout(buttons)
+
+    def _on_play_language_changed(self, *_args) -> None:
+        chinese = self.play_language_combo.currentData() == "zh"
+        self.play_button.setText("② 从头朗读中文" if chinese else "② 从头朗读英文")
+        self.play_language_note.setText("可直接朗读上方中文讲稿，无需先翻译" if chinese else "英文需要先完成整段翻译")
 
     @Slot(object)
     def _invoke(self, fn):
@@ -3382,32 +3400,40 @@ class RehearsalDialog(QDialog):
         self._resize_rows()
 
     def _show_play_progress(self, row, progress):
-        if self._stop_play.is_set() or row >= len(self._translations):
+        spoken_lines = getattr(self, "_play_lines", [])
+        if self._stop_play.is_set() or row >= len(spoken_lines):
             return
-        english = self._translations[row]
-        chunks = token_chunks(english)
+        spoken = spoken_lines[row]
+        chunks = token_chunks(spoken)
         word = current_token_index(chunks, progress)
         if row == self._active_row and word == self._last_word:
             return
         if row != self._active_row:
             old_label = self.result_list.cellWidget(self._active_row, 1) if self._active_row >= 0 else None
-            if old_label is not None:
+            if old_label is not None and getattr(self, "_play_language", "en") == "en":
                 old_label.setText(html.escape(self._translations[self._active_row]))
-            self.result_list.selectRow(row)
-            self.result_list.scrollToItem(self.result_list.item(row, 1))
+            if row < self.result_list.rowCount():
+                self.result_list.selectRow(row)
+                self.result_list.scrollToItem(self.result_list.item(row, 1))
         self._active_row, self._last_word = row, word
         rendered = highlight_html(chunks, word)
-        self.result_list.cellWidget(row, 1).setText(rendered)
-        chinese = self._sentences[row]
-        self.subtitle_zh.setText(html.escape(chinese))
+        language = getattr(self, "_play_language", "en")
+        chinese_lines = getattr(self, "_play_chinese_lines", [])
+        chinese = chinese_lines[row] if row < len(chinese_lines) else ""
+        if language == "en" and row < self.result_list.rowCount():
+            label = self.result_list.cellWidget(row, 1)
+            if label is not None:
+                label.setText(rendered)
+        self.subtitle_zh.setText(html.escape(chinese if language == "en" else "中文原稿"))
         self.subtitle_en.setText(rendered)
-        self.subtitle_overlay.show_progress(chinese, english, progress)
+        self.subtitle_overlay.show_progress(chinese if language == "en" else "", spoken, progress)
 
     def _finish_play(self, message):
         self.pause_button.setEnabled(False)
         self.pause_button.setText("暂停")
         self.play_button.setEnabled(True)
         self.translate_button.setEnabled(True)
+        self.play_language_combo.setEnabled(True)
         self.progress_label.setText(message)
 
     # ------------------------------------------------------------- translate
@@ -3472,9 +3498,20 @@ class RehearsalDialog(QDialog):
     def _play_all(self) -> None:
         if getattr(self, "_play_thread", None) is not None and self._play_thread.is_alive():
             return
-        if not self._translations:
+        language = str(self.play_language_combo.currentData() or "en")
+        if language == "zh":
+            source = self.source_edit.toPlainText().strip()
+            spoken_lines = split_source_sentences(source)
+            if not spoken_lines:
+                QMessageBox.information(self, "讲稿预习", "请先在左侧粘贴要朗读的中文讲稿")
+                return
+            chinese_lines = list(spoken_lines)
+        elif not self._translations:
             QMessageBox.information(self, "讲稿预习", "请先完成整段翻译")
             return
+        else:
+            spoken_lines = list(self._translations)
+            chinese_lines = list(self._sentences)
         if not str(self.settings.get("tts_voice_id", "") or "").strip():
             QMessageBox.warning(self, "讲稿预习", "请先在设置中填写克隆音色 voice_id")
             return
@@ -3486,14 +3523,18 @@ class RehearsalDialog(QDialog):
         self.pause_button.setText("暂停")
         self.play_button.setEnabled(False)
         self.translate_button.setEnabled(False)
+        self.play_language_combo.setEnabled(False)
+        self._play_language = language
+        self._play_lines = spoken_lines
+        self._play_chinese_lines = chinese_lines
         devices = [self.settings.get("monitor_output_device")]
         if self.to_meeting_check.isChecked():
             devices.insert(0, self.settings.shared.get("teams_output_device"))
-        args = (list(self._translations), devices, speech_settings(self.settings), self._stop_play, self._generation)
+        args = (spoken_lines, devices, speech_settings(self.settings, language=language), self._stop_play, self._generation)
         self._play_thread = threading.Thread(target=self._play_worker, args=args, daemon=True)
         self._play_thread.start()
 
-    def _play_worker(self, translations, devices, payload, stop, generation) -> None:
+    def _play_worker(self, spoken_lines, devices, payload, stop, generation) -> None:
         from ..audio import MultiOutputPlayer
         from .speech_policy import speech_chunks
         from .rehearsal import play_pcm
@@ -3509,15 +3550,15 @@ class RehearsalDialog(QDialog):
             session = create_tts_session(client, payload, on_audio=captured.extend, on_error=errors.append)
             self._rehearsal_session = session
             session.start()
-            for index, english in enumerate(translations):
+            for index, spoken_text in enumerate(spoken_lines):
                 while self._pause_play.is_set() and not stop.is_set():
                     stop.wait(.02)
                 if stop.is_set():
                     break
                 captured.clear()
-                self._post(generation, lambda p=index, total=len(translations):
+                self._post(generation, lambda p=index, total=len(spoken_lines):
                     self.progress_label.setText(f"正在准备第 {p + 1}/{total} 句音频…"))
-                for chunk in speech_chunks(english):
+                for chunk in speech_chunks(spoken_text):
                     if not session.speak(chunk):
                         raise ApiError("讲稿发声队列未就绪")
                 deadline = time.monotonic() + 120
@@ -3533,7 +3574,7 @@ class RehearsalDialog(QDialog):
                     break
                 if not captured:
                     raise ApiError("讲稿合成未返回有效音频")
-                self._post(generation, lambda p=index, total=len(translations):
+                self._post(generation, lambda p=index, total=len(spoken_lines):
                     self.progress_label.setText("已暂停" if self._pause_play.is_set() else f"正在朗读第 {p + 1}/{total} 句"))
                 self._post(generation, lambda p=index: self._show_play_progress(p, 0.0))
                 if not play_pcm(bytes(captured), player, stop, self._pause_play,
