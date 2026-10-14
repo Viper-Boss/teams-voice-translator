@@ -32,7 +32,8 @@ class SpeechReliabilityTests(unittest.TestCase):
 
     def test_empty_audio_is_failure(self):
         s,a,e,c=self.session(lambda *args:None)
-        s.start();s.speak('empty');self.assertTrue(s.wait_until_idle(2))
+        s.start();s.speak('empty');self.assertTrue(s.wait_until_idle(5))
+        self.assertEqual(c._stream_qwen3_tts_http.call_count, 4)
         self.assertEqual(len(e),1);self.assertFalse(a)
 
     def test_partial_stream_is_never_replayed(self):

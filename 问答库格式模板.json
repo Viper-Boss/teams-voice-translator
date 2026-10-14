@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "Q1",
+      "question": "What is the main task of your study?",
+      "answer": "My study focuses on estimating defect dimensions from measured signals.",
+      "question_zh": "你的研究主要解决什么问题？",
+      "answer_zh": "我的研究重点是从测量信号估计缺陷尺寸。",
+      "points": [],
+      "aliases": [],
+      "category": "研究概况",
+      "priority": 2,
+      "basis": "check",
+      "source": "",
+      "note": "这是格式示例，需改为自己的真实研究。提醒不放进 answer。"
+    }
+  ]
+}

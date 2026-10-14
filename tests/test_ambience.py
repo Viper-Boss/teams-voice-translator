@@ -51,6 +51,16 @@ class AmbienceTests(unittest.TestCase):
             engine.player = None
             engine.shutdown()
 
+    def test_consecutive_answers_use_only_short_breathing_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = DefenseEngine(DefenseSettings(Path(tmp)), EngineCallbacks())
+            engine._write_ambience_tail = Mock()
+            engine._speech_jobs["First."] = object()
+            engine._speech_jobs["Second."] = object()
+            engine._on_utterance_done("First.", 4800)
+            engine._write_ambience_tail.assert_called_once_with(140)
+            engine.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

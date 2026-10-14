@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import audioop
 import io
 import queue
@@ -107,7 +109,114 @@ def choose_committee_loopback(
         for device in allowed:
             if device.index == int(configured_index):
                 return device
+    # 没保存过（或保存的已不存在）：优先真实扬声器/耳机，别落到远程桌面、虚拟声卡上——
+    # 例如 ToDesk 装的虚拟声卡常被 Windows 设成默认输出，监听它就听不到评委。
+    real = [device for device in allowed if not is_virtual_endpoint(device.name)]
+    if real:
+        return real[0]
     return allowed[0] if allowed else None
+
+
+VIRTUAL_ENDPOINT_MARKERS = (
+    "todesk", "virtual", "voicemeeter", "vb-audio", "oray", "sunlogin", "向日葵",
+    "remote audio", "steam streaming", "nvidia broadcast", "obs",
+)
+
+
+def is_virtual_endpoint(name: str) -> bool:
+    """远程桌面 / 虚拟声卡一类的播放端点：自动挑选评委监听设备时尽量避开。"""
+    lowered = str(name or "").casefold()
+    return any(marker in lowered for marker in VIRTUAL_ENDPOINT_MARKERS)
+
+
+_JUNK_DEVICE_MARKERS = (
+    "声音映射器", "sound mapper", "主声音", "primary sound", "()",
+)
+_MIX_MARKERS = ("立体声混音", "stereo mix", "what u hear", "波形混音")
+
+
+def _is_cable_input(name: str) -> bool:
+    lowered = str(name or "").casefold()
+    return "cable input" in lowered or "cable in 16ch" in lowered
+
+
+def useful_devices(devices, *, kind: str, keep_index=None) -> list:
+    """设置里下拉框默认只列有用的设备，别把几十条重复驱动全摊出来。
+
+    * 同一个设备 Windows 会按 MME / DirectSound / WASAPI / WDM-KS 各列一遍。本程序按
+      24 kHz 直接打开设备，优先 MME；仅其他接口提供的独立端点仍保留。
+    * 去掉「声音映射器」「主声音驱动」这类转发项和名字为空的项。
+    * kind="mic"：去掉虚拟声卡、远程桌面、立体声混音（选了它们要么没声、要么把自己的声音录进去）。
+    * kind="monitor"：去掉虚拟声卡、远程桌面（试听要用真的耳机/音箱）。
+    * kind="cable"：只列 VB-CABLE 的 CABLE Input；一个都没有时全列，方便看清楚缺什么。
+    * 当前已选的设备（keep_index）即使被筛掉也会保留在最前面，保证「选哪个锁哪个」不跳。
+    """
+    items = list(devices or [])
+    def rank(d):
+        host = str(getattr(d, "host_api", "")).casefold()
+        return 0 if "mme" in host else 1 if "wasapi" in host else 2 if "directsound" in host else 3
+    base = sorted(items, key=rank)
+    base = [d for d in base if not any(m in str(d.name).casefold() for m in _JUNK_DEVICE_MARKERS)]
+    if kind == "mic":
+        base = [d for d in base if not is_virtual_endpoint(d.name) and not _is_cable_input(d.name)
+                and "cable output" not in str(d.name).casefold()
+                and not any(m in str(d.name).casefold() for m in _MIX_MARKERS)]
+    elif kind == "monitor":
+        base = [d for d in base if not is_virtual_endpoint(d.name) and not _is_cable_input(d.name)]
+    elif kind == "cable":
+        cables = [d for d in base if _is_cable_input(d.name)] or [d for d in items if _is_cable_input(d.name)]
+        base = cables or base
+    # 同名去重（MME 会把长名字截成 31 个字符，截断后相同的算同一个）
+    seen: set[str] = set()
+    result = []
+    for device in base:
+        key = str(device.name).strip().casefold()[:31]
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(device)
+    if keep_index is not None and all(d.index != keep_index for d in result):
+        kept = next((d for d in items if d.index == keep_index), None)
+        if kept is not None:
+            key = str(kept.name).strip().casefold()[:31]
+            result = [d for d in result if str(d.name).strip().casefold()[:31] != key]
+            result.insert(0, kept)
+    return result
+
+
+def resolve_program_output(settings):
+    """Resolve the virtual cable by identity instead of trusting an old index."""
+    index = settings.shared.get("teams_output_device")
+    name = str(settings.get("teams_output_device_name", "") or "")
+    host = str(settings.get("teams_output_host_api", "") or "")
+    if not name:
+        return index
+    _, outputs = list_audio_devices()
+    matches = [d for d in outputs if d.name == name and (not host or d.host_api == host)]
+    exact = next((d for d in matches if d.index == index), None)
+    if exact:
+        return exact.index
+    if matches:
+        # Legacy configurations did not record the driver interface.
+        return next((d.index for d in matches if "mme" in d.host_api.casefold()), matches[0].index)
+    raise RuntimeError(f"会议输出设备已断开：{name}。请重新选择虚拟声卡，防止声音发往其他设备。")
+
+
+def resolve_monitor_device(settings):
+    """Follow the saved endpoint identity when Windows renumbers devices; never reroute silently."""
+    index = settings.get("monitor_output_device")
+    name = str(settings.get("monitor_output_device_name", "") or "")
+    host = str(settings.get("monitor_output_host_api", "") or "")
+    if index is None or not name:
+        return index  # System default or legacy configuration, until explicitly saved.
+    _, outputs = list_audio_devices()
+    matches = [d for d in outputs if d.name == name and (not host or d.host_api == host)]
+    exact = next((d for d in matches if d.index == index), None)
+    if exact:
+        return exact.index
+    if len(matches) == 1:
+        return matches[0].index
+    raise RuntimeError(f"试听设备已断开或无法确定：{name}。请在设置中重新选择试听设备。")
 
 
 class MicrophoneCapture:
@@ -197,37 +306,57 @@ class MultiOutputPlayer:
         self.sample_rate = sample_rate
         self.streams: list[sd.RawOutputStream] = []
         self._retired_streams = []
+        self._stream_formats = {}
+        self._monitor_streams = set()
         self._io_lock = threading.RLock()
 
     def __enter__(self) -> "MultiOutputPlayer":
         try:
-            for device in self.devices:
-                stream = sd.RawOutputStream(
-                    device=device,
-                    samplerate=self.sample_rate,
-                    channels=1,
-                    dtype="int16",
-                )
+            for index, device in enumerate(self.devices):
+                rate, channels = self.sample_rate, 1
+                try:
+                    stream = sd.RawOutputStream(device=device, samplerate=rate, channels=channels, dtype="int16")
+                except sd.PortAudioError as exc:
+                    if len(exc.args) < 2 or exc.args[1] not in (-9997, -9998):
+                        raise
+                    # Some WDM-KS headphones require native rate/stereo. Retry the
+                    # SAME endpoint with conversion, never the default/another device.
+                    info = sd.query_devices(device, 'output')
+                    rate = int(info['default_samplerate'])
+                    channels = min(2, int(info['max_output_channels']))
+                    stream = sd.RawOutputStream(device=device, samplerate=rate, channels=channels, dtype="int16")
                 self.streams.append(stream)
+                self._stream_formats[id(stream)] = [rate, channels, None]
+                if index > 0:
+                    self._monitor_streams.add(id(stream))
                 stream.start()
             return self
         except Exception:
             self.close()
             raise
 
-    def write(self, pcm: bytes) -> None:
+    def write(self, pcm: bytes, *, include_monitor: bool = True) -> None:
         """写入所有健康流；某条流报错时立即剔除（防止继续写入死流导致原生崩溃）并抛出一次。"""
         with self._io_lock:
-            self._write_locked(pcm)
+            self._write_locked(pcm, include_monitor=include_monitor)
 
-    def _write_locked(self, pcm):
+    def _write_locked(self, pcm, *, include_monitor=True):
         if not self.streams:
             raise RuntimeError("输出流已关闭或没有可用设备")
         failures = []
         healthy = []
         for stream in self.streams:
             try:
-                stream.write(pcm)
+                fmt = self._stream_formats.get(id(stream), [self.sample_rate,1,None])
+                converted = pcm
+                if fmt[0] != self.sample_rate:
+                    converted, fmt[2] = audioop.ratecv(converted,2,1,self.sample_rate,fmt[0],fmt[2])
+                if fmt[1] == 2:
+                    converted = audioop.tostereo(converted,2,1,1)
+                if not include_monitor and id(stream) in self._monitor_streams:
+                    # Keep the endpoint clock running without leaking this utterance.
+                    converted = bytes(len(converted))
+                stream.write(converted)
                 healthy.append(stream)
             except Exception as exc:
                 self._retired_streams.append(stream)
@@ -241,6 +370,8 @@ class MultiOutputPlayer:
             healthy, retired = self.streams, self._retired_streams
             self.streams = []
             self._retired_streams = []
+            self._stream_formats = {}
+            self._monitor_streams.clear()
             for stream in healthy:
                 try:
                     stream.stop()
@@ -272,13 +403,17 @@ class DirectAudioBridge:
         output_device: int | None,
         sample_rate: int,
         tap: Callable[[bytes], None] | None = None,
+        *,
+        monitor_devices: list[int | None] | None = None,
+        monitor_enabled: Callable[[], bool] | None = None,
+        output_lock=None,
     ) -> None:
         if self.running.is_set():
             return
         if self.thread is not None and self.thread.is_alive():
             raise RuntimeError("原声输出线程仍在关闭中")
         self.audio_queue = queue.Queue(maxsize=24)
-        self.player = MultiOutputPlayer([output_device], sample_rate)
+        self.player = MultiOutputPlayer([output_device, *(monitor_devices or [])], sample_rate)
         self.player.__enter__()
         self.running.set()
 
@@ -293,7 +428,13 @@ class DirectAudioBridge:
                         continue
                     if item is None or not self.running.is_set():
                         break
-                    player.write(item)
+                    with output_lock if output_lock is not None else nullcontext():
+                        if not self.running.is_set():
+                            break
+                        if monitor_enabled is None:
+                            player.write(item)
+                        else:
+                            player.write(item, include_monitor=monitor_enabled())
             finally:
                 player.close()
 

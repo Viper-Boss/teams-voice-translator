@@ -45,7 +45,7 @@ class CommitteeLoopbackTests(unittest.TestCase):
             capture = Mock()
             capture.start.return_value = self.devices[1]
             with patch('teams_voice_translator.defense.pipeline.list_loopback_devices', return_value=self.devices), \
-                 patch('teams_voice_translator.defense.pipeline.create_realtime_asr', return_value=asr), \
+                 patch('teams_voice_translator.defense.pipeline.CommitteeASRProcess', return_value=asr), \
                  patch('teams_voice_translator.defense.pipeline.SystemAudioCapture', return_value=capture):
                 engine._start_committee_listening(28)
             capture.start.assert_called_once_with(29, engine._on_loopback_audio, target_rate=16000)
@@ -54,22 +54,23 @@ class CommitteeLoopbackTests(unittest.TestCase):
             self.assertTrue(any('编号已变化' in status for status in statuses))
             engine.shutdown()
 
-    def test_direct_voice_and_tail_are_never_sent_to_committee_asr(self):
+    def test_committee_is_received_while_direct_or_translated_output_is_active(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = DefenseEngine(DefenseSettings(Path(tmp)), EngineCallbacks())
             engine.asr_committee = Mock()
             engine._direct_requested = True
-            engine._on_loopback_audio(b'own voice')
+            engine._on_loopback_audio(b'committee during F8 start')
             engine._direct_requested = False
             engine._direct_active = True
-            engine._on_loopback_audio(b'own voice')
+            engine._on_loopback_audio(b'committee during F8')
             engine._direct_active = False
             engine._suppress_until = time.monotonic() + .5
-            engine._on_loopback_audio(b'tail')
-            engine.asr_committee.send_audio.assert_not_called()
+            engine._on_loopback_audio(b'committee during TTS')
             engine._suppress_until = 0
             engine._on_loopback_audio(b'committee')
-            engine.asr_committee.send_audio.assert_called_once_with(b'committee')
+            self.assertEqual([call.args[0] for call in engine.asr_committee.send_audio.call_args_list],
+                             [b'committee during F8 start', b'committee during F8',
+                              b'committee during TTS', b'committee'])
             engine.shutdown()
 
 

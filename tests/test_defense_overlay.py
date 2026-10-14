@@ -58,7 +58,10 @@ class SubtitleOverlayTest(unittest.TestCase):
     def test_show_sentence_displays_both_lines(self) -> None:
         self.overlay.show_sentence("主要贡献是新算法。", "The main contribution is a novel algorithm.", 6.0)
         self.assertIn("主要贡献", self.overlay.zh_label.text())
-        self.assertIn("The main", self.overlay.en_label.text())
+        # 显示即高亮第一个词，所以文本里带 span；比较去标签后的内容。
+        import re as _re
+        plain = _re.sub(r"<[^>]+>", "", self.overlay.en_label.text())
+        self.assertIn("The main", plain)
         self.assertEqual(self.overlay._duration, 6.0)
 
     def test_tick_moves_highlight(self) -> None:

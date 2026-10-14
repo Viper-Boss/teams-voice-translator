@@ -12,3 +12,4 @@ keyring>=25.5,<26
 alibabacloud-oss-v2>=1.1,<2
 imageio-ffmpeg>=0.6,<1
 python-pptx>=1.0,<2
+pypdf>=5,<7

@@ -48,12 +48,17 @@ def _enable_crash_log() -> None:
         pass
 
 
-if not any(flag in sys.argv for flag in ("--smoke-test", "--self-check-stress")):
-    _enable_crash_log()
-else:
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+    if "--committee-process-smoke" in sys.argv:
+        from teams_voice_translator.defense.committee_process import offline_process_smoke
+        output = sys.argv[sys.argv.index("--smoke-output") + 1]
+        sys.exit(offline_process_smoke(output))
+    if not any(flag in sys.argv for flag in ("--smoke-test", "--self-check-stress")):
+        _enable_crash_log()
+    else:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     if "--self-check-stress" in sys.argv:
         from teams_voice_translator.defense.selfcheck_stress import run_stress
         sys.exit(run_stress())

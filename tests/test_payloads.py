@@ -50,7 +50,7 @@ class PayloadTests(unittest.TestCase):
                 instruction="请" * 51,
             )
 
-    def test_instruction_parameter_name_matches_model_family(self):
+    def test_http_instruction_parameter_is_singular_for_both_families(self):
         cosy = build_tts_payload(
             "Hello", model="cosyvoice-v3.5-plus", voice="voice", instruction="Speak warmly."
         )
@@ -59,8 +59,8 @@ class PayloadTests(unittest.TestCase):
         )
         self.assertEqual(cosy["input"]["instruction"], "Speak warmly.")
         self.assertNotIn("instructions", cosy["input"])
-        self.assertEqual(qwen["input"]["instructions"], "Speak warmly.")
-        self.assertNotIn("instruction", qwen["input"])
+        self.assertEqual(qwen["input"]["instruction"], "Speak warmly.")
+        self.assertNotIn("instructions", qwen["input"])
 
     def test_live_translate_push_to_talk_with_voice_clone(self):
         payload = build_live_translate_session_update(

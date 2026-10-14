@@ -85,7 +85,11 @@ class TtsHttpSessionTest(unittest.TestCase):
 
     def test_retries_once_then_reports_error(self) -> None:
         client = FakeHttpClient(fail_times=2)
-        session = self.make_session(client)
+        failed = []
+        session = TtsHttpSession(
+            client, http_settings(), on_audio=self.audio.append,
+            on_error=self.errors.append, on_utterance_failed=failed.append,
+        )
         session.start()
         session.speak("Will fail.")
         self.assertTrue(wait_for(lambda: bool(self.errors), timeout=8))
@@ -93,6 +97,7 @@ class TtsHttpSessionTest(unittest.TestCase):
         self.assertEqual(client.calls, ["Will fail.", "Will fail."], "失败后应重试一次")
         self.assertEqual(self.audio, [])
         self.assertIn("跳过", self.errors[0])
+        self.assertEqual(failed, ["Will fail."])
 
     def test_interrupt_drops_audio_and_recovers(self) -> None:
         client = FakeHttpClient()
@@ -135,6 +140,42 @@ class TtsHttpSessionTest(unittest.TestCase):
         self.assertEqual(self.first, ['First.', 'Second.', 'Third.'])
         self.assertEqual(self.audio, [b'AA', b'BB', b'CC'])
         self.assertEqual([text for text, _size in self.done], ['First.', 'Second.', 'Third.'])
+
+    def test_later_batches_prefetch_while_first_answer_is_playing(self) -> None:
+        first_playing = threading.Event()
+        release_first = threading.Event()
+        second_synthesized = threading.Event()
+        audio = []
+
+        class AheadClient(FakeHttpClient):
+            def _stream_qwen3_tts_http(self, text, settings, on_audio, cancel_event):
+                self.calls.append(text)
+                on_audio({'First.': b'AA', 'Second.': b'BB', 'Third.': b'CC'}[text])
+                if text == 'Second.':
+                    second_synthesized.set()
+                return 2
+
+        def play(chunk):
+            audio.append(chunk)
+            if chunk == b'AA':
+                first_playing.set()
+                release_first.wait(1)
+
+        client = AheadClient()
+        session = TtsHttpSession(
+            client,
+            {'tts_model': 'qwen3-tts-vc-2026-01-22', 'voice': 'v1', 'speech_mode': 'natural'},
+            on_audio=play,
+        )
+        session.start()
+        self.assertTrue(session.speak_batch(['First.']))
+        self.assertTrue(first_playing.wait(1))
+        self.assertTrue(session.speak_batch(['Second.', 'Third.']))
+        self.assertTrue(second_synthesized.wait(1), '后一批应在首句仍播放时开始后台合成')
+        release_first.set()
+        self.assertTrue(wait_for(lambda: audio == [b'AA', b'BB', b'CC']))
+        session.close()
+        self.assertEqual(audio, [b'AA', b'BB', b'CC'])
 
 
 class TtsFactoryTest(unittest.TestCase):

@@ -310,6 +310,53 @@ class CreateRealtimeAsrTests(unittest.TestCase):
             self.assertIsInstance(asr, FunASRRealtime, model)
         self.assertFalse(is_duplex_asr_model("qwen3-asr-flash-realtime-2025-10-27"))
 
+    def test_qwen_audio_31_streaming_uses_duplex_protocol(self):
+        from teams_voice_translator.api_payloads import is_duplex_asr_model, is_qwen_audio_streaming_asr
+
+        for model in ("qwen-audio-3.1-asr-flash-streaming", "qwen-audio-3.0-asr-flash-streaming"):
+            self.assertTrue(is_duplex_asr_model(model), model)
+            self.assertTrue(is_qwen_audio_streaming_asr(model), model)
+        self.assertFalse(is_qwen_audio_streaming_asr("fun-asr-realtime"))
+        self.assertFalse(is_qwen_audio_streaming_asr("qwen-audio-3.0-tts-plus"))
+
+    def test_inline_hotwords_only_for_qwen_audio_streaming(self):
+        from teams_voice_translator.api_payloads import ASR_HOTWORD_WEIGHT, build_fun_asr_run_task
+
+        qwen = build_fun_asr_run_task(
+            model="qwen-audio-3.1-asr-flash-streaming",
+            context_terms=["Swin Transformer", "MFL", "MFL"],
+            language="en",
+            context_prefix="Technical terms in this defense: ",
+        )["payload"]
+        self.assertEqual(qwen["parameters"]["vocabulary"],
+                         {"Swin Transformer": ASR_HOTWORD_WEIGHT, "MFL": ASR_HOTWORD_WEIGHT})
+        text = qwen["input"]["context"][0]["content"][0]["text"]
+        self.assertEqual(text, "Technical terms in this defense: Swin Transformer, MFL, MFL")
+        fun = build_fun_asr_run_task(model="fun-asr-realtime", context_terms=["有限元"])["payload"]
+        self.assertNotIn("vocabulary", fun["parameters"])
+        self.assertTrue(fun["input"]["context"][0]["content"][0]["text"].startswith("本次课堂专业术语："),
+                        "课堂版不传前缀时保持原来的措辞")
+
+    def test_context_prefix_reaches_run_task(self):
+        """答辩传进来的前缀要真的出现在发给服务器的 run-task 里。"""
+        import json as _json
+
+        asr, *_ = make_fun_asr(model="qwen-audio-3.1-asr-flash-streaming", language="en",
+                               context_terms=["MobileNetV3"], context_prefix="Terms: ")
+        sent = []
+
+        class FakeWs:
+            def send(self, data):
+                sent.append(data)
+
+        fake = FakeWs()
+        asr.ws = fake
+        asr._on_open(fake)
+        payload = _json.loads(sent[0])["payload"]
+        self.assertEqual(payload["model"], "qwen-audio-3.1-asr-flash-streaming")
+        self.assertEqual(payload["input"]["context"][0]["content"][0]["text"], "Terms: MobileNetV3")
+        self.assertIn("MobileNetV3", payload["parameters"]["vocabulary"])
+
     def test_run_task_heartbeat_only_for_fun_asr(self):
         from teams_voice_translator.api_payloads import build_fun_asr_run_task
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 
 from pynput import keyboard
+
+
+log = logging.getLogger(__name__)
 
 
 KEY_MAP = {
@@ -61,7 +65,12 @@ class HoldHotkeys:
         self.listener.start()
 
     def stop(self) -> None:
-        if self.listener is not None:
-            self.listener.stop()
-            self.listener = None
+        listener, self.listener = self.listener, None
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:
+                # A listener may already have failed in its platform thread.
+                # Closing the app must still release the remaining resources.
+                log.exception("Unable to stop keyboard listener cleanly")
         self.held.clear()

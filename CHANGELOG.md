@@ -2,6 +2,18 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+
+## [1.16.15] - 2026-10-15
+
+- Synchronize the latest defense workflow: independent committee recognition, complete-question intent understanding, paper-grounded first-person answers, and answer-popup generation.
+- Add Q&A validation with thinking controls, import/export templates, and persistent rendered-audio versions across model changes and cancelled batches.
+- Fix manuscript playback jumps, subtitle progress, total/remaining timing, cache retention, and quick-phrase playback feedback.
+- Keep F8/F9 monitoring separate, coordinate foreground speech to avoid overlapping voices, and retain independent background ambience with bundled CC0 recordings and attribution.
+- Support URL-only TTS results without issuing another synthesis request; use the documented HTTP instruction field and improve connection-test errors and complete text display.
+- Align Qwen default B, manuscript and prepared-answer rendering with the original cloned voice: no automatic delivery instruction or text humanization. Explicit instructions and follow mode remain available; paid cached audio is retained.
+- Validate 498 relevant offline tests and packaged no-network UI/separate-process smoke checks. Cloud voice quality still requires listening with the user's own cloned voice.
+- Publish source and licensed runtime assets only; personal themes, credentials, voice samples, thesis documents and user caches are excluded.
+
 ## [1.14.8] - 2026-09-07
 
 ### 讲稿预习

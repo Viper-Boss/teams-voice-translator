@@ -621,13 +621,13 @@ class VoiceCloneDialog(QDialog):
         form = QFormLayout()
         self.model = QComboBox()
         self.model.addItems([
-            QWEN3_TTS_VC_REALTIME_MODEL,
-            QWEN3_TTS_VC_HTTP_MODEL,
-            COSYVOICE_V3_5_PLUS_MODEL,
-            COSYVOICE_V3_FLASH_MODEL,
             "qwen-audio-3.0-tts-plus",
             "qwen-audio-3.0-tts-flash",
+            QWEN3_TTS_VC_HTTP_MODEL,
+            QWEN3_TTS_VC_REALTIME_MODEL,
             "qwen3.5-livetranslate-flash-realtime",
+            COSYVOICE_V3_5_PLUS_MODEL,
+            COSYVOICE_V3_FLASH_MODEL,
         ])
         self.model.setCurrentText(model)
         self.prefix = QLineEdit("myvoice")
@@ -2480,13 +2480,13 @@ class MainWindow(QMainWindow):
         mt_group = QGroupBox("5. 机器翻译 Qwen-MT（字幕 / 键盘输入 / 传统流水线共用）")
         mt_form = QFormLayout(mt_group)
         self.translation_model = ScrollSafeComboBox()
-        self.translation_model.addItems(["qwen-mt-flash", "qwen-mt-plus", "qwen-mt-turbo", "qwen-mt-lite"])
+        self.translation_model.addItems(["qwen-mt-plus", "qwen-mt-flash", "qwen-mt-turbo", "qwen-mt-lite"])
         self.summary_model = ScrollSafeComboBox()
         self.summary_model.setEditable(True)
-        self.summary_model.addItems(["qwen-plus", "qwen-max", "qwen-flash"])
+        self.summary_model.addItems(["qwen-max", "qwen-plus", "qwen-flash"])
         self.long_form_model = ScrollSafeComboBox()
         self.long_form_model.setEditable(True)
-        self.long_form_model.addItems(["qwen-plus", "qwen-max", "qwen-flash"])
+        self.long_form_model.addItems(["qwen-max", "qwen-plus", "qwen-flash"])
         self.translation_domain = QLineEdit()
         self.translation_terms = QPlainTextEdit()
         self.translation_terms.setMaximumHeight(65)
@@ -2527,12 +2527,12 @@ class MainWindow(QMainWindow):
         self.tts_provider.addItem("VoiceStudio 本地语音", "voicestudio")
         self.tts_model = ScrollSafeComboBox()
         self.tts_model.addItems([
-            QWEN3_TTS_VC_REALTIME_MODEL,
-            QWEN3_TTS_VC_HTTP_MODEL,
-            COSYVOICE_V3_5_PLUS_MODEL,
-            COSYVOICE_V3_FLASH_MODEL,
             "qwen-audio-3.0-tts-plus",
             "qwen-audio-3.0-tts-flash",
+            QWEN3_TTS_VC_HTTP_MODEL,
+            QWEN3_TTS_VC_REALTIME_MODEL,
+            COSYVOICE_V3_5_PLUS_MODEL,
+            COSYVOICE_V3_FLASH_MODEL,
         ])
         self.voice = QLineEdit()
         self.voice.setPlaceholderText("克隆 voice_id，或系统音色如 loongjohn")

@@ -5,6 +5,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from teams_voice_translator.defense.pipeline import (
     STATE_IDLE,
@@ -54,11 +55,62 @@ class DefenseEngineTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.engine.shutdown()
+        self._tmp.cleanup()
+
+    def test_shutdown_closes_meeting_spool_after_command_thread(self) -> None:
+        with patch.object(self.engine._meeting_spool, "close", wraps=self.engine._meeting_spool.close) as close:
+            self.engine.shutdown()
+        self.assertFalse(self.engine._cmd_thread.is_alive())
+        close.assert_called_once()
 
     def test_start_defense_without_credentials_reports_error(self) -> None:
         self.engine.start_defense()
         self.assertTrue(self.capture.wait_error("Workspace"), "缺少 Workspace 时应回报错误")
         self.assertNotEqual(self.engine.state, "standby")
+
+    def test_partial_start_failure_releases_audio_resources(self) -> None:
+        player = MagicMock()
+        tts = MagicMock()
+
+        def fail_after_opening_audio() -> None:
+            self.engine.player = player
+            self.engine.tts = tts
+            raise RuntimeError("模拟音色初始化失败")
+
+        with patch.object(self.engine, "_build_clients"), patch.object(
+            self.engine, "_ensure_voice", side_effect=fail_after_opening_audio
+        ):
+            with self.assertRaisesRegex(RuntimeError, "模拟音色初始化失败"):
+                self.engine._do_start_defense()
+        player.close.assert_called_once()
+        tts.close.assert_called_once()
+        self.assertIsNone(self.engine.player)
+        self.assertIsNone(self.engine.tts)
+        self.assertEqual(self.engine.state, STATE_IDLE)
+
+    def test_old_tts_callbacks_cannot_write_to_new_player(self) -> None:
+        self.settings.set("tts_voice_id", "test-voice")
+        callbacks = {}
+        session = MagicMock()
+
+        def create_session(_client, _settings, **kwargs):
+            callbacks.update(kwargs)
+            return session
+
+        with patch.object(self.engine, "_build_clients"), patch.object(
+            self.engine, "_ensure_player"
+        ), patch("teams_voice_translator.defense.pipeline.create_tts_session", side_effect=create_session):
+            self.engine._ensure_voice()
+        self.engine._do_stop_defense()
+        # 模拟新会话已启动，而旧网络请求才返回最后一个音频块。
+        self.engine._stopping = False
+        replacement_player = MagicMock()
+        self.engine.player = replacement_player
+        callbacks["on_first_audio"]("stale")
+        callbacks["on_audio"](b"\x00\x00")
+        callbacks["on_utterance_done"]("stale", 2)
+        replacement_player.write.assert_not_called()
+        self.assertEqual(self.engine.meeting_audio_seconds(), 0)
 
     def test_send_text_without_voice_reports_error(self) -> None:
         self.settings.shared.update({"workspace_id": "llm-demo"})
@@ -112,12 +164,14 @@ class DefenseEngineTest(unittest.TestCase):
         self.assertIn("Cached sentence.", started)
 
     def test_pcm_cache_evicts_oldest(self) -> None:
-        self.engine._cache_limit = 2
-        self.engine._store_pcm("one", b"1")
-        self.engine._store_pcm("two", b"2")
-        self.engine._store_pcm("three", b"3")
+        # 上限改成按字节算：按条数限毫无意义，一条可能 0.5 秒也可能 20 秒。
+        self.engine._cache_limit_bytes = 4
+        self.engine._store_pcm("one", b"12")
+        self.engine._store_pcm("two", b"34")
+        self.engine._store_pcm("three", b"56")
         self.assertNotIn("one", self.engine._pcm_cache)
         self.assertIn("three", self.engine._pcm_cache)
+        self.assertLessEqual(self.engine._cache_bytes, 4)
 
     def test_clear_memory_clears_pcm_cache(self) -> None:
         self.engine._store_pcm("gone", b"x")

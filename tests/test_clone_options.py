@@ -30,13 +30,22 @@ class CloneOptionsTests(unittest.TestCase):
         self.addCleanup(dialog.close)
         return dialog
 
-    def test_duration_defaults_to_actual_length_and_caps_at_thirty(self):
+    def test_duration_defaults_to_recommended_window_not_longest_possible(self):
+        """官方最佳区间 10~20 秒；更长不会更像，所以默认停在 18 秒而不是拉满。"""
         dialog = self.dialog()
-        for duration, expected in ((3.5, 3.5), (13.125, 13.125), (30, 30), (65.7, 30)):
+        for duration, expected in ((3.5, 3.5), (13.125, 13.125), (18, 18), (30, 18), (65.7, 18)):
             dialog._set_sample(Path("test.wav"), duration)
             self.assertEqual(dialog.sample_length_spin.value(), expected)
+        # 上限仍跟随音频实际长度，用户想手动拉长到 30 秒依然可以。
+        dialog._set_sample(Path("test.wav"), 65.7)
+        self.assertEqual(dialog.sample_length_spin.maximum(), 30.0)
         self.assertFalse(dialog.preprocess_check.isChecked())
         self.assertFalse(dialog.volume_normalization_check.isChecked())
+
+    def test_clone_language_defaults_to_english_and_is_selectable(self):
+        dialog = self.dialog()
+        self.assertEqual(dialog.clone_language_combo.currentData(), "en")
+        self.assertGreaterEqual(dialog.clone_language_combo.count(), 2)
 
     def test_models_only_enable_supported_options(self):
         qwen = self.dialog("qwen3-tts-vc-2026-01-22")
@@ -51,8 +60,10 @@ class CloneOptionsTests(unittest.TestCase):
         from PySide6.QtGui import QWheelEvent
         dialog = self.dialog()
         dialog._set_sample(Path('test.wav'), 30)
-        dialog.show()
         spin = dialog.sample_length_spin
+        # 默认值现在是推荐的 18 秒；这个用例测的是滚轮不该改值，所以先手动拉到上限。
+        spin.setValue(30)
+        dialog.show()
         spin.setFocus()
         self.app.processEvents()
         for delta in (-120, 120):
@@ -64,6 +75,8 @@ class CloneOptionsTests(unittest.TestCase):
     def test_selected_options_are_snapshotted_before_worker_starts(self):
         dialog = self.dialog()
         dialog._set_sample(Path("test.wav"), 18.125)
+        # 手动改成一个非默认值，才能证明送进 worker 的是「当时的快照」。
+        dialog.sample_length_spin.setValue(18.125)
         dialog.preprocess_check.setChecked(True)
         dialog.volume_normalization_check.setChecked(True)
         with patch.object(dialog, "_collect_oss_values", return_value={}), \
@@ -71,9 +84,24 @@ class CloneOptionsTests(unittest.TestCase):
             dialog._start_clone()
         options = thread.call_args.kwargs["args"][-1]
         self.assertEqual(options, {"max_seconds": 18.125, "min_seconds": 3.0,
-                                  "preprocess": True, "volume_normalization": True})
+                                  "preprocess": True, "volume_normalization": True,
+                                  "language": "en"})
         dialog.sample_length_spin.setValue(10)
         self.assertEqual(options["max_seconds"], 18.125)
+
+    def test_selected_clone_language_reaches_the_worker(self):
+        """回归：两个 worker 以前都把 language 写死成 zh，英文音色根本复刻不出来。"""
+        dialog = self.dialog()
+        dialog._set_sample(Path("test.wav"), 18.0)
+        dialog.clone_language_combo.setCurrentIndex(
+            dialog.clone_language_combo.findData("zh")
+        )
+        with patch.object(dialog, "_collect_oss_values", return_value={}), \
+             patch("teams_voice_translator.defense.ui.threading.Thread") as thread:
+            dialog._start_clone()
+        self.assertEqual(thread.call_args.kwargs["args"][-1]["language"], "zh")
+        # 选择要记住，下次打开对话框不用重选。
+        self.assertEqual(self.settings.get("clone_language"), "zh")
 
     def test_http_payload_types_and_unsupported_fields(self):
         args = dict(prefix="sample", audio_url="https://example.com/a.wav", max_seconds=18.125,

@@ -90,6 +90,16 @@ class DefenseUiTest(unittest.TestCase):
         self.assertIsInstance(dialog.volume_spin, NoWheelSpinBox)
         self.assertIsInstance(self.window.qa_panel.model_combo, NoWheelComboBox)
 
+    def test_next_model_requires_reference_instead_of_cloned_voice(self) -> None:
+        dialog = SettingsDialog(self.window, self.settings)
+        index = dialog.tts_model_combo.findData("qwen-audio-3.1-tts-next")
+        self.assertGreaterEqual(index, 0)
+        dialog.tts_model_combo.setCurrentIndex(index)
+        self.assertFalse(dialog.voice_combo.isEnabled())
+        self.assertFalse(dialog.clone_voice_button.isEnabled())
+        self.assertTrue(dialog.reference_audio_box.isVisibleTo(dialog) or not dialog.isVisible())
+        self.assertIn("参考录音", dialog.voice_hint.text())
+
     def test_state_pill_updates(self) -> None:
         self.window._on_state_changed("listening")
         self.assertEqual(self.window.state_pill.text(), "F9 翻译中")
@@ -253,11 +263,25 @@ class DefenseUiTest(unittest.TestCase):
         self.assertGreaterEqual(preset_index, 0)
         dialog.instruction_preset_combo.setCurrentIndex(preset_index)
         self.assertIn("thoughtful", dialog.instruction_edit.text())
-        dialog.ambience_combo.setCurrentIndex(dialog.ambience_combo.findData("subtle"))
+        dialog.ambience_combo.setCurrentIndex(dialog.ambience_combo.findData("room"))
         dialog._save()
         reloaded = DefenseSettings(base_dir=Path(self._tmp.name))
         self.assertIn("thoughtful", reloaded.get("tts_instruction"))
-        self.assertEqual(reloaded.get("ambience_mode"), "subtle")
+        self.assertEqual(reloaded.get("ambience_mode"), "room")
+
+    def test_thoughtful_english_style_is_optional_and_saved(self) -> None:
+        dialog = SettingsDialog(self.window, self.settings)
+        index = dialog.translation_style_combo.findData("thoughtful")
+        self.assertGreaterEqual(index, 0)
+        dialog.translation_style_combo.setCurrentIndex(index)
+        preset = dialog.instruction_preset_combo.findText("轻微犹豫 · 像现场思考")
+        self.assertGreaterEqual(preset, 0)
+        dialog.instruction_preset_combo.setCurrentIndex(preset)
+        self.assertIn("hesitations", dialog.instruction_edit.text())
+        dialog._save()
+        reloaded = DefenseSettings(base_dir=Path(self._tmp.name))
+        self.assertEqual(reloaded.get("translation_style"), "thoughtful")
+        self.assertIn("hesitations", reloaded.get("tts_instruction"))
 
     def test_committee_device_hint_uses_saved_selection_while_idle(self) -> None:
         self.settings.shared.update({"loopback_device_name": "Speakers B [Loopback]"})
@@ -309,8 +333,10 @@ class DefenseUiTest(unittest.TestCase):
     def test_committee_done_feeds_qa_question(self) -> None:
         panel = self.window.qa_panel
         panel.auto_check.setChecked(False)
+        self.window._on_committee_recognized(9, "What is the main limitation?")
         self.window._on_committee_done(9, "What is the main limitation?", "主要局限是什么？")
         self.assertEqual(panel.question_label.text(), "What is the main limitation?")
+        self.assertEqual(panel._question_parts[9][1], "主要局限是什么？")
         self.assertEqual(panel._answer_en, "")
 
     def test_qa_model_persisted(self) -> None:
@@ -328,8 +354,10 @@ class DefenseUiTest(unittest.TestCase):
         for combo in (dialog.tts_model_combo, dialog.llm_combo, dialog.asr_combo):
             self.assertFalse(combo.isEditable())
             self.assertIn("·", combo.currentText(), "每个模型项都应带一句简介")
-        self.assertEqual(dialog.tts_model_combo.currentData(), "qwen3-tts-vc-realtime-2026-01-15")
-        self.assertEqual(dialog.llm_combo.currentData(), "qwen-plus")
+        # 断言「下拉框显示的就是已保存的值」，而不是把某个默认模型写死——
+        # 默认模型会随百炼上新而更新，写死只会让测试跟着一起过时。
+        self.assertEqual(dialog.tts_model_combo.currentData(), self.settings.get("tts_model"))
+        self.assertEqual(dialog.llm_combo.currentData(), self.settings.get("llm_model"))
         self.assertGreaterEqual(dialog.llm_combo.count(), 5, "翻译模型列表应足够丰富")
 
     def test_clone_voice_dialog_constructs(self) -> None:
@@ -385,7 +413,7 @@ class DefenseUiTest(unittest.TestCase):
         combo.setCurrentIndex(combo.findData(9))
         dialog._toggle_cable_lock()
         self.assertFalse(combo.isEnabled())
-        self.assertEqual(combo.currentData(), 7, "重新锁定应回到 CABLE Input")
+        self.assertEqual(combo.currentData(), 9, "选哪个锁哪个：重新锁定锁住刚选的设备")
         # 找不到 CABLE Input 时提示并禁用锁定按钮
         result2 = dialog._apply_cable_lock(combo, outputs[:1])
         self.assertIsNone(result2)

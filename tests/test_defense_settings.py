@@ -18,9 +18,42 @@ class DefenseSettingsTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_defaults(self) -> None:
-        self.assertEqual(self.settings.get("tts_model"), "qwen3-tts-vc-realtime-2026-01-15")
-        self.assertEqual(self.settings.get("llm_model"), "qwen-plus")
+        self.assertEqual(self.settings.get("tts_model"), "qwen-audio-3.0-tts-plus")
+        # 2026-09：qwen-plus / qwen3-max 已列为旧版，默认换到当前代。
+        self.assertEqual(self.settings.get("llm_model"), "qwen3.8-flash")
+        self.assertEqual(self.settings.get("qa_model"), "qwen3.8-flash")
+        self.assertEqual(self.settings.get("asr_model"), "qwen-audio-3.1-asr-flash-streaming")
+        self.assertEqual(self.settings.get("committee_asr_model"), "qwen-audio-3.1-asr-flash-streaming")
+        self.assertFalse(self.settings.get("qa_thinking"))
         self.assertEqual(self.settings.get("tts_voice_id"), "")
+        self.assertEqual(self.settings.get("translation_style"), "accurate")
+
+    def test_default_tts_model_supports_instruction_and_ssml(self) -> None:
+        """回归：旧默认 qwen3-tts-vc-realtime-* 两样都不支持，语气预设全是灰的。"""
+        from teams_voice_translator.api_payloads import tts_supports
+
+        model = self.settings.get("tts_model")
+        self.assertTrue(tts_supports(model, "instruction"))
+        self.assertTrue(tts_supports(model, "ssml"))
+
+    def test_clone_language_defaults_to_english(self) -> None:
+        """跨语种复刻质量下降；答辩说英文，默认就该用英文样音。"""
+        self.assertEqual(self.settings.get("clone_language"), "en")
+
+    def test_old_default_asr_migrates_once_but_user_choice_is_kept(self) -> None:
+        """还停在旧默认的换成推荐模型；用户主动选的别的模型不碰；迁移只做一次。"""
+        path = self.base_dir / "defense_settings.json"
+        path.write_text(json.dumps({
+            "asr_model": "qwen3-asr-flash-realtime",
+            "committee_asr_model": "fun-asr-realtime",
+        }), encoding="utf-8")
+        migrated = DefenseSettings(base_dir=self.base_dir)
+        self.assertEqual(migrated.get("asr_model"), "qwen-audio-3.1-asr-flash-streaming")
+        self.assertEqual(migrated.get("committee_asr_model"), "fun-asr-realtime")
+        # 迁移后用户又主动选回旧模型：不能再被改掉
+        migrated.set("asr_model", "qwen3-asr-flash-realtime")
+        again = DefenseSettings(base_dir=self.base_dir)
+        self.assertEqual(again.get("asr_model"), "qwen3-asr-flash-realtime")
 
     def test_round_trip(self) -> None:
         self.settings.set("tts_voice_id", "voice-123")

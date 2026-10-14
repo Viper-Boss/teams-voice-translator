@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
@@ -6,10 +7,11 @@ datas = []
 binaries = []
 hiddenimports = []
 datas.append(('assets/defense_mode.ico', 'assets'))
+datas.append(('teams_voice_translator/ambience_assets', 'teams_voice_translator/ambience_assets'))
 local_assets = Path('teams_voice_translator/local_assets')
-if local_assets.is_dir():
+if local_assets.is_dir() and not os.environ.get('DEFENSE_SHARE_BUILD'):
     # Optional personal theme. This folder is gitignored and is included only
-    # in a build made on the owner's machine.
+    # in a build made on the owner's machine (never in the share build).
     datas.append((str(local_assets), 'teams_voice_translator/local_assets'))
 tmp_ret = collect_all('keyring')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
@@ -20,6 +22,9 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('imageio_ffmpeg')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pptx')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# Thesis PDF import. Bundled so the EXE never has to install anything.
+tmp_ret = collect_all('pypdf')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 hiddenimports.append('lxml._elementpath')
 

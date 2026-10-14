@@ -76,7 +76,8 @@ class SpeechTuningTests(unittest.TestCase):
             try:
                 engine.archive_folder = Path(tmp)
                 (Path(tmp) / "录音").mkdir()
-                engine._meeting_pcm = bytearray(48000)
+                # 整场录音已改为落盘暂存，不再是内存里的 bytearray
+                engine._meeting_spool.append(bytes(48000))
                 self.assertEqual(engine.meeting_audio_seconds(), 1.0)
                 engine._submit = lambda action, label: action()
                 engine.export_meeting_audio()

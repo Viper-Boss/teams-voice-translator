@@ -1,12 +1,31 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
 from teams_voice_translator.ui import MainWindow
+from teams_voice_translator.hotkeys import HoldHotkeys
+
+
+class HotkeyCleanupTests(unittest.TestCase):
+    def test_failed_listener_stop_does_not_interrupt_cleanup(self):
+        callback = lambda: None
+        hotkeys = HoldHotkeys(
+            direct_key="f5", translate_key="f9", cancel_key="esc",
+            direct_press=callback, direct_release=callback,
+            translate_press=callback, translate_release=callback, cancel=callback,
+        )
+        hotkeys.listener = MagicMock()
+        hotkeys.listener.stop.side_effect = NotImplementedError("listener failed")
+        hotkeys.held.add("f5")
+        with self.assertLogs("teams_voice_translator.hotkeys", level="ERROR"):
+            hotkeys.stop()
+        self.assertIsNone(hotkeys.listener)
+        self.assertFalse(hotkeys.held)
 
 
 class EngineUiTests(unittest.TestCase):

@@ -5,7 +5,8 @@ import json
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from pathlib import Path
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlparse
 
@@ -13,6 +14,7 @@ import requests
 import websocket
 
 from .audio import decode_audio_to_pcm16_mono
+from .voice_sample import voice_sample_duration, VoiceSampleError
 from .longform import (
     build_long_form_context_payload,
     build_long_form_translation_payload,
@@ -20,6 +22,8 @@ from .longform import (
 )
 from .api_payloads import (
     build_asr_session_update,
+    build_minimax_clone_payload,
+    build_minimax_tts_payload,
     build_fun_asr_finish_task,
     build_fun_asr_run_task,
     build_qwen3_tts_http_payload,
@@ -31,8 +35,10 @@ from .api_payloads import (
     is_cosyvoice_model,
     is_duplex_asr_model,
     is_qwen3_tts_vc_model,
+    is_minimax_tts_model,
     is_qwen3_tts_vc_realtime_model,
     parse_json_list,
+    parse_minimax_tts_response as _parse_minimax_tts_response,
 )
 
 
@@ -272,7 +278,177 @@ class BailianClient:
             return self._stream_qwen3_tts_realtime(text, settings, on_audio, cancel_event)
         if is_qwen3_tts_vc_model(model):
             return self._stream_qwen3_tts_http(text, settings, on_audio, cancel_event)
+        if is_minimax_tts_model(model):
+            return self._stream_minimax_tts(text, settings, on_audio, cancel_event)
         return self._stream_legacy_tts(text, settings, on_audio, cancel_event)
+
+    # ----------------------------------------------------------- MiniMax
+    MINIMAX_TTS_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
+
+    def _stream_next_audio(
+        self, text: str, settings: dict[str, Any],
+        on_audio: Callable[[bytes], None], cancel_event: threading.Event,
+    ) -> int:
+        """AudioGen is a complete-file API with a per-request reference, not a voice_id TTS API."""
+        source = Path(str(settings.get("tts_reference_audio", "") or "")).expanduser()
+        if source.suffix.lower() not in {".wav", ".mp3", ".ogg", ".opus"} or not source.is_file():
+            raise ApiError("Next 模型需要本机 WAV、MP3 或 OGG/Opus 参考录音")
+        if not 0 < source.stat().st_size <= 10 * 1024 * 1024:
+            raise ApiError("Next 参考录音必须小于 10 MB")
+        try:
+            duration = voice_sample_duration(source)
+        except VoiceSampleError as exc:
+            raise ApiError(f"Next 参考录音无效：{exc}") from exc
+        if not 0 < duration <= 30:
+            raise ApiError("Next 参考录音最长 30 秒，请先裁剪")
+        if not text.strip() or len(text) > 2800:
+            raise ApiError("Next 单段台词不能超过 2800 字符")
+        if cancel_event.is_set():
+            return 0
+        mime = {".wav": "audio/wav", ".mp3": "audio/mpeg",
+                ".ogg": "audio/ogg", ".opus": "audio/ogg"}[source.suffix.lower()]
+        language = "Chinese" if str(settings.get("tts_language_hint", "en")) == "zh" else "English"
+        prompt = f"@voice1 says exactly in {language}, naturally and without background sounds: {json.dumps(text, ensure_ascii=False)}"
+        payload = {
+            "model": "qwen-audio-3.1-tts-next",
+            "input": {
+                "text_prompt": prompt,
+                "references": [{"audio_data": f"data:{mime};base64,{base64.b64encode(source.read_bytes()).decode('ascii')}"}],
+                "format": "wav", "sample_rate": 24000, "channels": 1,
+                "volume": int(settings.get("tts_volume", 50)),
+                "rate": float(settings.get("tts_rate", 1.0)),
+            },
+        }
+        response = requests.post(
+            f"{self.root}/api/v1/services/audio/tts/SpeechSynthesizer",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json=payload, timeout=(10, 180), proxies=self.proxies,
+        )
+        try:
+            if not response.ok:
+                raise ApiError(_extract_api_error(response))
+            body = response.json()
+        finally:
+            response.close()
+        if cancel_event.is_set():
+            return 0
+        if body.get("code"):
+            raise ApiError(f"{body.get('code')}: {body.get('message', '')}")
+        audio_url = str(((body.get("output") or {}).get("audio") or {}).get("url") or "")
+        if not audio_url.startswith("https://"):
+            raise ApiError("Next 未返回有效的 HTTPS 音频下载地址")
+        download = requests.get(audio_url, stream=True, timeout=(10, 60), proxies=self.proxies)
+        try:
+            if not download.ok:
+                raise ApiError(f"Next 音频下载失败：HTTP {download.status_code}")
+            chunks = bytearray()
+            for part in download.iter_content(chunk_size=65536):
+                if cancel_event.is_set():
+                    return 0
+                chunks.extend(part)
+                if len(chunks) > 16 * 1024 * 1024:
+                    raise ApiError("Next 返回音频过长，已停止下载")
+        finally:
+            download.close()
+        pcm = decode_audio_to_pcm16_mono(bytes(chunks), sample_rate=24000)
+        if not pcm or len(pcm) % 2:
+            raise ApiError("Next 返回的音频无效")
+        if cancel_event.is_set():
+            return 0
+        on_audio(pcm)
+        return len(pcm)
+
+    def _stream_minimax_tts(
+        self,
+        text: str,
+        settings: dict[str, Any],
+        on_audio: Callable[[bytes], None],
+        cancel_event: threading.Event,
+    ) -> int:
+        """MiniMax 同步合成：一次请求拿回整句 PCM（hex 编码）。
+
+        不用 SSE 流式：官方说明流式最后一帧可能附带整段拼接音频，
+        处理稍有差池就会把整句再播一遍。自然模式本来就整句缓冲后才播，
+        非流式没有损失；并行预生成由会话层负责。
+        """
+        payload = build_minimax_tts_payload(
+            text,
+            model=settings["tts_model"],
+            voice=settings["voice"],
+            sample_rate=settings["tts_sample_rate"],
+            volume=settings["tts_volume"],
+            rate=settings["tts_rate"],
+            pitch=settings["tts_pitch"],
+        )
+        if cancel_event.is_set():
+            return 0
+        response = requests.post(
+            f"{self.root}{self.MINIMAX_TTS_PATH}",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=(10, max(self.timeout, 60)),
+            proxies=self.proxies,
+        )
+        try:
+            if not response.ok:
+                raise ApiError(_extract_api_error(response))
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise ApiError(f"MiniMax 合成返回的不是 JSON：{response.text[:200]}") from exc
+        finally:
+            response.close()
+        if cancel_event.is_set():
+            return 0
+        try:
+            pcm = _parse_minimax_tts_response(body)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        on_audio(pcm)
+        return len(pcm)
+
+    def clone_minimax_voice(
+        self,
+        *,
+        target_model: str,
+        voice_id: str,
+        audio_url: str,
+        preview_text: str,
+        noise_reduction: bool = False,
+        volume_normalization: bool = False,
+    ) -> tuple[str, str]:
+        """MiniMax 复刻是同步的：成功即可用，**不要**再走 wait_for_voice_ready。
+
+        返回 (voice_id, 试听音频 URL)。voice_id 就是请求里自己起的名字。
+        """
+        payload = build_minimax_clone_payload(
+            target_model=target_model,
+            voice_id=voice_id,
+            audio_url=audio_url,
+            preview_text=preview_text,
+            noise_reduction=noise_reduction,
+            volume_normalization=volume_normalization,
+        )
+        response = requests.post(
+            f"{self.root}/api/v1/services/audio/tts/customization",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=max(self.timeout, 120),
+            proxies=self.proxies,
+        )
+        if not response.ok:
+            detail = _extract_api_error(response)
+            if response.status_code == 403:
+                detail += f"。请在百炼 API Key 的模型权限中授权 {target_model}。"
+            raise ApiError(detail)
+        body = response.json()
+        output = body.get("output") or {}
+        base = output.get("base_resp") or {}
+        if int(base.get("status_code", -1)) != 0:
+            raise ApiError(
+                f"MiniMax 复刻失败：{base.get('status_msg') or body.get('message') or body}"
+            )
+        return voice_id, str(output.get("demo_audio") or "")
 
     def _stream_legacy_tts(
         self,
@@ -281,6 +457,8 @@ class BailianClient:
         on_audio: Callable[[bytes], None],
         cancel_event: threading.Event,
     ) -> int:
+        if cancel_event.is_set():
+            return 0
         payload = build_tts_payload(
             text,
             model=settings["tts_model"],
@@ -328,32 +506,101 @@ class BailianClient:
                     )
                 raise ApiError(detail)
             total = 0
-            for raw_line in response.iter_lines(decode_unicode=True):
+            audio_url = ""
+            request_id = ""
+            pending_json = ""
+            headers = getattr(response, "headers", {})
+            content_type = headers.get("Content-Type", "") if isinstance(headers, Mapping) else ""
+            lines = ([json.dumps(response.json())] if "application/json" in content_type.lower()
+                     else response.iter_lines(decode_unicode=True))
+            for raw_line in lines:
                 if cancel_event.is_set():
                     response.close()
                     break
                 if not raw_line:
                     continue
-                line = raw_line.strip()
+                line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                line = line.strip()
+                if line.startswith((":", "event:", "id:", "retry:")):
+                    continue
                 if line.startswith("data:"):
                     line = line[5:].strip()
                 if not line or line == "[DONE]":
                     continue
                 try:
-                    event = json.loads(line)
+                    event = json.loads(pending_json + line)
+                    pending_json = ""
                 except json.JSONDecodeError:
+                    pending_json += line + "\n"
+                    if len(pending_json) > 32 * 1024 * 1024:
+                        raise ApiError("语音服务响应过大")
                     continue
+                if not isinstance(event, dict):
+                    raise ApiError("语音服务返回了无效响应")
+                request_id = str(event.get("request_id") or request_id)
                 if event.get("code"):
                     raise ApiError(f"{event.get('code')}: {event.get('message', '')}")
                 audio = (event.get("output") or {}).get("audio") or {}
+                audio_url = str(audio.get("url") or audio_url)
                 encoded = audio.get("data") or ""
                 if encoded:
                     chunk = base64.b64decode(encoded, validate=True)
                     total += len(chunk)
                     on_audio(chunk)
+                if (event.get("output") or {}).get("finish_reason") == "stop":
+                    break
+            # The service may finish with a full file URL rather than PCM
+            # events. Retrieve that same synthesis; never issue another POST.
+            if not total and audio_url and not cancel_event.is_set():
+                pcm = self._download_tts_audio(audio_url, settings, cancel_event)
+                if pcm:
+                    total = len(pcm)
+                    on_audio(pcm)
+            if not total and not cancel_event.is_set():
+                hint = f"（请求编号 {request_id}）" if request_id else ""
+                raise ApiError("语音服务未返回有效音频或可下载地址" + hint)
             return total
         finally:
             response.close()
+
+    def _download_tts_audio(self, url, settings, cancel_event) -> bytes:
+        """Download a result once without passing the API credential to OSS."""
+        if urlparse(url).scheme not in ("http", "https"):
+            raise ApiError("语音服务返回了无效音频地址")
+        response = None
+        try:
+            response = requests.get(url, stream=True, timeout=(10, self.timeout), proxies=self.proxies)
+            if not response.ok:
+                raise ApiError(f"合成音频下载失败（HTTP {response.status_code}）")
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            if "text/" in content_type or "json" in content_type:
+                raise ApiError("合成音频地址返回了错误页面，请重新生成这一句")
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=65536):
+                if cancel_event.is_set():
+                    return b""
+                data.extend(chunk)
+                if len(data) > 32 * 1024 * 1024:
+                    raise ApiError("合成音频文件过大，请拆分段落")
+            if cancel_event.is_set():
+                return b""
+            blob = bytes(data)
+            container = blob.startswith((b"RIFF", b"ID3", b"OggS", b"fLaC")) or blob[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
+            if container or str(settings.get("format", "pcm")) != "pcm":
+                pcm = decode_audio_to_pcm16_mono(blob, sample_rate=int(settings.get("tts_sample_rate", 24000)))
+                if pcm.startswith(b"RIFF"):
+                    raise ApiError("下载的 WAV 音频文件无效")
+            else:
+                pcm = blob
+            if not pcm or len(pcm) % 2:
+                raise ApiError("下载的合成音频为空或 PCM 不完整")
+            return pcm
+        except requests.RequestException as exc:
+            # Exception URLs can contain OSS signatures; do not display them.
+            raise ApiError(f"合成音频下载异常（{type(exc).__name__}），可重试当前句") from exc
+        finally:
+            if response is not None:
+                response.close()
 
     def _stream_qwen3_tts_http(
         self,
@@ -697,6 +944,37 @@ class BailianClient:
             )
         return voice, warning
 
+    def delete_voice(self, voice_id: str, target_model: str) -> None:
+        """在阿里云上删除一个复刻音色（删了就不能再用，不可恢复）。
+
+        qwen3-tts-vc 系列走 qwen-voice-enrollment（action=delete, voice=…），
+        CosyVoice / qwen-audio 走 voice-enrollment（action=delete_voice, voice_id=…）。
+        MiniMax 音色没有公开的删除接口，只能到百炼控制台删。
+        """
+        from .api_payloads import is_minimax_tts_model
+
+        voice_id = (voice_id or "").strip()
+        if not voice_id:
+            raise ApiError("音色 ID 为空")
+        if is_minimax_tts_model(target_model):
+            raise ApiError("MiniMax 音色不能从这里远程删除，请到百炼控制台删除")
+        if is_qwen3_tts_vc_model(target_model):
+            payload = {"model": "qwen-voice-enrollment", "input": {"action": "delete", "voice": voice_id}}
+        else:
+            payload = {"model": "voice-enrollment", "input": {"action": "delete_voice", "voice_id": voice_id}}
+        response = requests.post(
+            f"{self.root}/api/v1/services/audio/tts/customization",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=self.timeout,
+            proxies=self.proxies,
+        )
+        if not response.ok:
+            detail = _extract_api_error(response)
+            if response.status_code == 404 or "not exist" in detail.lower() or "notfound" in detail.lower():
+                return   # 云上本来就没有了：当作删除成功
+            raise ApiError(detail)
+
     def query_voice(self, voice_id: str) -> dict[str, Any]:
         response = requests.post(
             f"{self.root}/api/v1/services/audio/tts/customization",
@@ -960,6 +1238,7 @@ class FunASRRealtime:
         context_terms: list[str] | None = None,
         vocabulary_id: str = "",
         proxy: str = "",
+        context_prefix: str = "",
     ) -> None:
         self.api_key = api_key
         self.workspace_id = workspace_id
@@ -973,6 +1252,7 @@ class FunASRRealtime:
         self.on_segment = on_segment
         self.combine_previews = combine_previews
         self.context_terms = list(context_terms or [])
+        self.context_prefix = context_prefix
         self.vocabulary_id = vocabulary_id.strip()
         self.proxy = proxy.strip()
         self.ready = threading.Event()
@@ -1086,6 +1366,7 @@ class FunASRRealtime:
             vocabulary_id=self.vocabulary_id,
             language=self.language,
             heartbeat=True,
+            context_prefix=self.context_prefix,
         )
         self.task_id = event["header"]["task_id"]
         ws.send(json.dumps(event, ensure_ascii=False))
@@ -1198,6 +1479,7 @@ def create_realtime_asr(
             combine_previews=combine_previews,
             context_terms=_fun_asr_context_terms(values, language),
             proxy=proxy,
+            context_prefix=str(values.get("asr_context_prefix", "") or ""),
         )
     return QwenRealtimeASR(
         api_key=api_key,

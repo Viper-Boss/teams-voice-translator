@@ -156,7 +156,10 @@ def import_presentation(
     if not response.ok:
         raise ApiError(_extract_api_error(response))
     try:
-        content = str(response.json()["choices"][0]["message"]["content"])
+        body = response.json()
+        content = str(body["choices"][0]["message"]["content"])
+        from .usage import record_llm_usage
+        record_llm_usage(str(payload.get("model", "")), body.get("usage"))
     except Exception as exc:
         raise ApiError(f"PPT 分析返回格式异常：{response.text[:300]}") from exc
     brief, terms = parse_context_response(content)
