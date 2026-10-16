@@ -19,6 +19,7 @@ from ..audio import (
         WavRecorder,
         choose_committee_loopback,
         list_loopback_devices,
+        recording_stamp,
         resolve_monitor_device,
         resolve_program_output,
     )
@@ -153,6 +154,9 @@ class DefenseEngine:
         self.archive_folder = None
         self.recorder: DualTrackRecorder | None = None
         self.mic_recorder: WavRecorder | None = None
+        self._recording_devices = None
+        self._recording_error = ""
+        self._recorded_teacher_seconds = 0.0
         self._player_lock = threading.RLock()
         self._pcm_cache: dict[str, CachedUtterance] = {}
         # 按**字节**限，不按条数。原来限 300 条毫无意义：一条可能是 0.5 秒，
@@ -1454,7 +1458,13 @@ class DefenseEngine:
         def action():
             was_active = self._session_active
             was_listening = self._listening
-            self._do_stop_defense()
+            keep_recording = (
+                was_active and bool(self.settings.get("auto_record", True))
+                and self._recording_devices == self._selected_recording_devices()
+            )
+            # Voice/model changes do not need to stop the independent local
+            # recorder. A device change starts a new part in the same folder.
+            self._do_stop_defense(keep_recording=keep_recording)
             self.client = None
             self.translator = None
             self._pcm_cache.clear()
@@ -1543,7 +1553,7 @@ class DefenseEngine:
                 raise ApiError("程序正在关闭")
         except Exception:
             # 设备或音色初始化到一半失败时，不能把播放器/TTS 留给下一次启动。
-            self._do_stop_defense()
+            self._do_stop_defense(keep_recording=not reset_audio)
             self.client = None
             self.translator = None
             raise
@@ -1566,7 +1576,7 @@ class DefenseEngine:
                 self.callbacks.on_error(f"录音启动失败（不影响翻译）：{exc}")
         self.callbacks.on_status("答辩通道已就绪：请选择「原声」或「翻译」；未勾选持续监听时需按住说话")
 
-    def _do_stop_defense(self) -> None:
+    def _do_stop_defense(self, *, keep_recording: bool = False) -> None:
         self._stopping = True
         self._stop_ambience_bed()
         self._tts_generation += 1
@@ -1594,14 +1604,11 @@ class DefenseEngine:
                     player.close()
                 except Exception as exc:
                     errors.append(f"player: {exc}")
-        for name in ("recorder", "mic_recorder"):
-            recorder = getattr(self, name)
-            setattr(self, name, None)
-            if recorder is not None:
-                try:
-                    recorder.stop()
-                except Exception as exc:
-                    errors.append(f"{name}: {exc}")
+        if not keep_recording:
+            try:
+                self._stop_recording()
+            except Exception as exc:
+                errors.append(f"录音: {exc}")
         self._listening = False
         self._direct_active = False
         self._session_active = False
@@ -1799,36 +1806,109 @@ class DefenseEngine:
         return base
 
     def _start_recording(self) -> None:
-        if self.archive_folder is not None:
+        # A saved directory is not evidence that a recorder is still running.
+        devices = self._selected_recording_devices()
+        if (self._recording_devices == devices
+                and self.recorder is not None and self.recorder.running.is_set()
+                and self.recorder.system_sink.running.is_set()
+                and self.recorder.microphone.running.is_set()
+                and not self.recorder.system_sink.error and not self.recorder.microphone.error):
             return
-        self.archive_folder = new_meeting_folder(self._base_directory())
+        if (self._recording_devices == devices
+                and self.mic_recorder is not None and self.mic_recorder.running.is_set()
+                and not self.mic_recorder.error):
+            return
+        if self.recorder is not None or self.mic_recorder is not None:
+            try:
+                self._stop_recording()
+            except Exception as exc:
+                self.callbacks.on_error(f"上一段录音异常，正在另存新片段：{exc}")
+        if self.archive_folder is None:
+            self.archive_folder = new_meeting_folder(self._base_directory())
         audio_dir = self.archive_folder / "录音"
         loopback_device = self.settings.shared.get("loopback_device")
-        if loopback_device is not None:
-            self.recorder = DualTrackRecorder()
-            self.recorder.start(
-                self.settings.shared.get("input_device"),
-                int(loopback_device),
-                audio_dir,
-                sample_rate=16000,
-            )
-        else:
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            self.mic_recorder = WavRecorder()
-            self.mic_recorder.start(
-                self.settings.shared.get("input_device"),
-                audio_dir / f"我的麦克风_{stamp}.wav",
-                16000,
-            )
+        self._recording_error = ""
+        try:
+            if loopback_device is not None:
+                candidate = DualTrackRecorder()
+                candidate.start(
+                    self.settings.shared.get("input_device"),
+                    int(loopback_device), audio_dir, sample_rate=16000,
+                )
+                self.recorder = candidate
+            else:
+                candidate = WavRecorder()
+                candidate.start(
+                    self.settings.shared.get("input_device"),
+                    audio_dir / f"我的麦克风_{recording_stamp()}.wav", 16000,
+                )
+                self.mic_recorder = candidate
+                self.callbacks.on_error("未录到老师声音：没有配置评委声音回环，目前仅录麦克风")
+        except Exception as exc:
+            self._recording_error = f"录音启动失败：{exc}"
+            raise
+        self._recording_devices = self._selected_recording_devices()
         self.callbacks.on_status(f"本场记录目录：{self.archive_folder}")
 
     def _stop_recording(self) -> None:
-        if self.recorder is not None:
-            recorder, self.recorder = self.recorder, None
-            recorder.stop()
+        errors = []
+        for name in ("recorder", "mic_recorder"):
+            recorder = getattr(self, name)
+            setattr(self, name, None)
+            if recorder is None:
+                continue
+            try:
+                recorder.stop()
+            except Exception as exc:
+                errors.append(str(exc))
+            finally:
+                if name == "recorder":
+                    self._recorded_teacher_seconds += (
+                        recorder.system_sink.frames_written / recorder.system_sink.sample_rate
+                    )
+        self._recording_devices = None
+        if errors:
+            self._recording_error = "；".join(errors)
+            raise RuntimeError(self._recording_error)
+
+    def _selected_recording_devices(self) -> tuple:
+        return (self.settings.shared.get("input_device"),
+                self.settings.shared.get("loopback_device"))
+
+    def set_auto_record(self, enabled: bool) -> None:
+        self.settings.set("auto_record", bool(enabled))
+
+        def action() -> None:
+            if not enabled:
+                self._stop_recording()
+            elif self._session_active:
+                self._start_recording()
+        self._submit(action, "切换录音")
+
+    def recording_status(self) -> tuple[str, str]:
+        """UI snapshot based on actual WAV writes, never the checkbox alone."""
+        if self._recording_error:
+            return "error", self._recording_error
+        recorder = self.recorder
+        if recorder is not None:
+            sink = recorder.system_sink
+            seconds = self._recorded_teacher_seconds + sink.frames_written / sink.sample_rate
+            clock = f"{int(seconds) // 60:02d}:{int(seconds) % 60:02d}"
+            for track in (sink, recorder.microphone):
+                if track.error:
+                    return "error", track.error
+                if not track.running.is_set():
+                    return "error", "录音写入已停止，请重新开启录音"
+            if not sink.last_audio_at or time.monotonic() - sink.last_audio_at > 15:
+                return "waiting", f"老师录音等待声音 · 已保存 {clock}（请确认评委播放设备）"
+            return "recording", f"老师录音中 · 已保存 {clock} · 麦克风分轨保存"
         if self.mic_recorder is not None:
-            mic, self.mic_recorder = self.mic_recorder, None
-            mic.stop()
+            if self.mic_recorder.error:
+                return "error", self.mic_recorder.error
+            return "error", "仅录麦克风，未录老师声音：请设置评委声音回环"
+        if self._session_active and bool(self.settings.get("auto_record", True)):
+            return "error", "录音未启动：请重新开启录音并检查设备"
+        return "idle", "录音未开启" if not self.archive_folder else "录音已停止 · 文件保存在本场记录目录"
 
     def _save_transcripts(self) -> None:
         if self.archive_folder is None:

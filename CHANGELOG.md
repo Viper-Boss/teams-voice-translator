@@ -1,7 +1,25 @@
-# 更新日志
+# 留子答辩器 · 更新日志
 
-本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。
+历史记录保留发布时的产品名称和版本标记；当前使用方式以 README 和使用说明为准。
 
+## [1.16.18] - 2026-10-16
+
+- 软件显示名称统一为「留子答辩器」，定位为专门为留学生开会和答辩准备的双向语音辅助工具。
+- 重写首页、使用说明、快速开始、分享版说明、贡献指南和安全说明；更新问答库说明与文档导航。
+- 说明四种设备分工、F8/F9 持续模式、独立评委识别、整题理解与第一人称助答，以及讲稿和录音操作。
+- 沿用既有包名、EXE 文件名、配置和录音目录，不迁移用户数据。
+
+## [1.16.17] - 2026-10-16
+
+- 修复记录目录已存在时错误跳过录音启动，导致应用设置或停止重开后漏录的问题。
+- 改音色、模型时保持录音；换设备或重新开启录音时另存新片段，避免覆盖前段。
+- 录音期间定期刷新 WAV 文件头；停止时保存队列中剩余音频，一轨异常仍尝试保存另一轨。
+- 显示实际老师录音时长、等待声音与错误状态；自动录音勾选在答辩中立即生效。
+- 149 项定向离线测试通过；打包界面和独立识别进程离线检查通过，未做真实声卡或付费云端验收。
+
+## [1.16.16] - 2026-10-16
+
+- 移除讲稿段落和句子上的全文悬浮预览；保留正常选择、播放及错误提示。
 
 ## [1.16.15] - 2026-10-15
 
@@ -13,6 +31,69 @@
 - Align Qwen default B, manuscript and prepared-answer rendering with the original cloned voice: no automatic delivery instruction or text humanization. Explicit instructions and follow mode remain available; paid cached audio is retained.
 - Validate 498 relevant offline tests and packaged no-network UI/separate-process smoke checks. Cloud voice quality still requires listening with the user's own cloned voice.
 - Publish source and licensed runtime assets only; personal themes, credentials, voice samples, thesis documents and user caches are excluded.
+
+## [1.15.6-local] - 2026-09-24
+
+- Add Qwen-Audio-3.1-TTS-Next as a separate reference-audio synthesis route: select a local clip in Settings; the app sends it with each request and plays the returned complete file. Existing cloned voice IDs cannot be used by this model.
+- Retry empty TTS responses automatically up to four total attempts with short bounded backoff. Other failures keep their existing retry limit.
+- Keep the previous AI answer visible while a replacement generates; allow English speech after clearing the Chinese reference text, disable speech when English is empty, and report playback requests honestly before sound starts.
+- No real cloud call was made during development; the new AudioGen route still needs an authorized live trial before defense use.
+- Verify 763 offline tests (762 passed, 1 skipped), packaged no-network UI startup, and 50 self-check/playback cycles without leaked TTS threads.
+
+## [1.15.5-local] - 2026-09-24
+
+- Group model dropdowns by provider and model family; order each family by flagship, balanced, and fast tiers while retaining every existing model ID.
+- Release partially opened audio resources when defense startup fails, and ignore callbacks arriving from a previous TTS session after stop or restart.
+- Close the meeting-audio spool only after the command thread exits, avoiding a shutdown race with slow audio-device cleanup.
+- Verify 754 offline tests (753 passed, 1 skipped), packaged no-network UI startup, and 50 self-check/playback cycles without leaked TTS threads. No paid cloud call or upload was made.
+
+## [1.15.4-local] - 2026-09-23
+
+- Add the bilingual answer view, updated ASR options, optional simultaneous translation, thesis import and study, answer popup, quick phrases, and locked scene presets.
+- Include pypdf in the packaged application so PDF thesis import works without installing Python on the destination computer.
+- Require an explicit opt-in for paid background voice pre-rendering; turning it off cancels the pending queue.
+- Verify the full Windows offline suite: 750 tests run, 749 passed and 1 skipped.
+
+## [1.15.3-local] - 2026-09-23
+
+- Add MiniMax cloned-voice models and update chat model choices, including explicit thinking control for realtime translation.
+- Add a local defense Q&A bank with import, cautious question matching, editable prepared answers, and optional cached audio playback.
+- Verify 645 Windows offline tests before packaging. Cloud model availability, voice quality, and real-device behavior still require live checks.
+
+## [1.15.2-local] - 2026-09-23
+
+- Rebuild the script desk around paragraph-level pre-rendering and uninterrupted local playback, with sentence-level cursor tracking inside each paragraph.
+- Spool meeting audio to disk instead of retaining the full session in memory; cap the in-memory PCM cache by bytes.
+- Separate disposable realtime TTS cache from protected pre-rendered script audio, add disk-space safeguards, cache usage reporting, and selective cleanup.
+- Open the meeting-audio spool lazily so an idle engine does not retain a Windows file handle or block temporary-directory cleanup.
+- Verify 554 Windows offline tests before packaging; no real Aliyun request was made.
+
+## [1.15.1-local] - 2026-09-22
+
+- Add persistent parameter-aware TTS PCM caching, including long-answer chunk reassembly and safe cache fallback.
+- Add the live script desk for pre-rendered, offline, sentence-level defense playback.
+- Add adaptive long-subtitle growth and page tracking for the active highlighted word.
+- Fix Qwen Audio 3.1 TTS session dispatch and automatically select the newest voice bound to a selected model without overriding manual choices.
+- Verify 498 Windows offline tests before packaging.
+
+## [1.15.0-local] - 2026-09-22
+
+- Add one-recording batch voice cloning with per-model capability checks, duration planning, partial-failure reporting, cancellation, and temporary OSS cleanup.
+- Add a single TTS capability table, English sample-language selection, explicit SSML sentence pauses, and optional opening fillers.
+- Make the blind A/B tool offline by default; require `--execute` for paid synthesis, keep labels hidden during execution, and reject comparisons with fewer than two successful candidates.
+- Fix Windows PowerShell 5 parsing of `setup.ps1`; verify 425 offline tests and packaged no-network UI smoke startup.
+
+## [1.14.9] - 2026-09-07
+
+### 连续发声
+
+- 自然模式的 HTTP/CosyVoice 合成改为跨发言持续预生成：最多三路并发合成、六句有界缓存，由单一播放器严格按发言顺序连续输出。
+- 后一句会在前一句仍播放时开始合成；连续句之间的环境音收尾缩短为 140 ms，减少逐句等待。
+- 流式模式保留收到音频立即播放的原行为；合成失败使用独立失败事件，不再误报为播放完成。
+
+### 验证
+
+- 327 项离线测试通过，覆盖跨批次提前合成、顺序播放、流式兼容、失败清理和连续句短间隔。
 
 ## [1.14.8] - 2026-09-07
 

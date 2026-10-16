@@ -7,6 +7,8 @@ import io
 import queue
 import subprocess
 import threading
+import time
+import uuid
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -719,47 +721,89 @@ class PcmWaveSink:
         self.audio_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=256)
         self.thread: threading.Thread | None = None
         self.path: Path | None = None
+        self.running = threading.Event()
+        self._stop_requested = threading.Event()
+        self.error = ""
+        self.frames_written = 0
+        self.sample_rate = 16000
+        self.last_audio_at = 0.0
 
     def start(self, path: Path, sample_rate: int) -> None:
+        if self.thread is not None and self.thread.is_alive():
+            raise RuntimeError("录音写入线程尚未停止")
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.audio_queue = queue.Queue(maxsize=256)
-        wav_file = wave.open(str(path), "wb")
+        # Never truncate an earlier paid-for/irreplaceable recording.
+        raw_file = path.open("xb")
+        wav_file = wave.open(raw_file, "wb")
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
+        self.sample_rate = sample_rate
+        self.error = ""
+        self.frames_written = 0
+        self.last_audio_at = 0.0
+        self._stop_requested.clear()
+        self.running.set()
 
         def writer() -> None:
             try:
-                while True:
-                    chunk = self.audio_queue.get()
-                    if chunk is None:
-                        break
+                last_flush = 0.0
+                # On stop, drain the entire queue instead of discarding a block
+                # to make space for a sentinel.
+                while not self._stop_requested.is_set() or not self.audio_queue.empty():
+                    try:
+                        chunk = self.audio_queue.get(timeout=0.2)
+                    except queue.Empty:
+                        continue
+                    if not chunk:
+                        continue
                     wav_file.writeframesraw(chunk)
+                    self.frames_written += len(chunk) // 2
+                    if time.monotonic() - last_flush >= 1.0:
+                        # writeframes patches the WAV header using the public API.
+                        # An open recording remains playable up to the last flush.
+                        wav_file.writeframes(b"")
+                        raw_file.flush()
+                        last_flush = time.monotonic()
+            except Exception as exc:
+                self.error = f"录音写入失败：{exc}"
             finally:
-                wav_file.close()
+                try:
+                    wav_file.close()
+                except Exception as exc:
+                    self.error = self.error or f"录音保存失败：{exc}"
+                finally:
+                    try:
+                        raw_file.close()
+                    except Exception as exc:
+                        self.error = self.error or f"录音文件关闭失败：{exc}"
+                    finally:
+                        self.running.clear()
 
         self.thread = threading.Thread(target=writer, name="pcm-wave-sink", daemon=True)
         self.thread.start()
 
     def write(self, pcm: bytes) -> None:
+        if not self.running.is_set() or self._stop_requested.is_set():
+            return
+        self.last_audio_at = time.monotonic()
         try:
             self.audio_queue.put_nowait(pcm)
         except queue.Full:
-            pass
+            self.error = "录音写入过慢，部分音频未保存，请检查磁盘"
 
     def stop(self) -> Path | None:
-        try:
-            self.audio_queue.put_nowait(None)
-        except queue.Full:
-            try:
-                self.audio_queue.get_nowait()
-                self.audio_queue.put_nowait(None)
-            except queue.Empty:
-                pass
+        self._stop_requested.set()
         if self.thread is not None:
             self.thread.join(timeout=5.0)
+            if self.thread.is_alive():
+                self.error = "录音文件仍在写入，请勿关闭程序"
+                raise RuntimeError(self.error)
             self.thread = None
+        if self.error:
+            raise RuntimeError(self.error)
         return self.path
 
 
@@ -807,7 +851,7 @@ class DualTrackRecorder:
     ) -> dict[str, Path]:
         if self.running.is_set():
             return dict(self.paths)
-        stamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+        stamp = recording_stamp()
         self.paths = {
             "microphone": directory / f"microphone_{stamp}.wav",
             "system": directory / f"teacher_system_{stamp}.wav",
@@ -825,62 +869,49 @@ class DualTrackRecorder:
             self.running.set()
             return dict(self.paths)
         except Exception:
-            self.stop(create_mix=False)
+            try:
+                self.stop(create_mix=False)
+            except Exception:
+                pass
             raise
 
     def stop(self, *, create_mix: bool = True) -> dict[str, Path]:
-        self.system_capture.stop()
-        microphone_path = self.microphone.stop()
-        system_path = self.system_sink.stop()
+        errors = []
+        # One failed device must not prevent the other track from being saved.
+        for resource in (self.system_capture, self.microphone, self.system_sink):
+            try:
+                resource.stop()
+            except Exception as exc:
+                errors.append(str(exc))
+        microphone_path = self.microphone.path
+        system_path = self.system_sink.path
         self.running.clear()
-        if create_mix and microphone_path and system_path and microphone_path.exists() and system_path.exists():
+        if not errors and create_mix and microphone_path and system_path and microphone_path.exists() and system_path.exists():
             mix_mono_wav(microphone_path, system_path, self.paths["mixed"])
+        if errors:
+            raise RuntimeError("；".join(errors))
         return dict(self.paths)
 
 
-class WavRecorder:
+def recording_stamp() -> str:
+    """Unique even when settings cause several restarts within one second."""
+    return time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:12]
+
+
+class WavRecorder(PcmWaveSink):
     """Continuously record one microphone to a mono 16-bit PCM WAV file."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.stream: sd.RawInputStream | None = None
-        self.thread: threading.Thread | None = None
-        self.audio_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=128)
-        self.running = threading.Event()
-        self.path: Path | None = None
-        self.sample_rate = 48000
 
     def start(self, device: int | None, path: Path, sample_rate: int = 48000) -> None:
         if self.running.is_set():
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.path = path
-        self.sample_rate = sample_rate
-        self.audio_queue = queue.Queue(maxsize=128)
-        wav_file = wave.open(str(path), "wb")
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        self.running.set()
-
-        def writer() -> None:
-            try:
-                while True:
-                    chunk = self.audio_queue.get()
-                    if chunk is None:
-                        break
-                    wav_file.writeframesraw(chunk)
-            finally:
-                wav_file.close()
-
-        self.thread = threading.Thread(target=writer, name="wav-recorder-writer", daemon=True)
-        self.thread.start()
+        super().start(path, sample_rate)
 
         def on_audio(indata, _frames, _time, _status) -> None:
-            try:
-                self.audio_queue.put_nowait(bytes(indata))
-            except queue.Full:
-                # Prefer a short gap over blocking PortAudio's callback thread.
-                pass
+            self.write(bytes(indata))
 
         try:
             self.stream = sd.RawInputStream(
@@ -893,28 +924,29 @@ class WavRecorder:
             )
             self.stream.start()
         except Exception:
-            self.running.clear()
-            self.audio_queue.put_nowait(None)
-            if self.thread is not None:
-                self.thread.join(timeout=2.0)
-                self.thread = None
+            try:
+                self.stop()
+            except Exception:
+                pass
             raise
 
     def stop(self) -> Path | None:
+        errors = []
         if self.stream is not None:
+            stream, self.stream = self.stream, None
             try:
-                self.stream.stop()
-            finally:
-                self.stream.close()
-                self.stream = None
-        if self.running.is_set():
-            self.running.clear()
+                stream.stop()
+            except Exception as exc:
+                errors.append(str(exc))
             try:
-                self.audio_queue.put_nowait(None)
-            except queue.Full:
-                self.audio_queue.get_nowait()
-                self.audio_queue.put_nowait(None)
-        if self.thread is not None:
-            self.thread.join(timeout=3.0)
-            self.thread = None
+                stream.close()
+            except Exception as exc:
+                errors.append(str(exc))
+        try:
+            super().stop()
+        except Exception as exc:
+            errors.append(str(exc))
+        if errors:
+            self.error = "；".join(errors)
+            raise RuntimeError(self.error)
         return self.path

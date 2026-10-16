@@ -434,6 +434,10 @@ class DefenseWindow(QMainWindow):
         self._build_ui()
         self._connect_signals()
         self.engine.start()
+        self.recording_timer = QTimer(self)
+        self.recording_timer.setInterval(1000)
+        self.recording_timer.timeout.connect(self._refresh_recording_status)
+        self.recording_timer.start()
         self._wire_quick_features()
         self._install_error_hooks()
         # 启动几秒后再开始后台预渲染：先让界面和引擎起来
@@ -443,7 +447,7 @@ class DefenseWindow(QMainWindow):
     def _build_ui(self) -> None:
         from .. import __version__
 
-        self.setWindowTitle(f"答辩模式 · 实时中英互译 v{__version__}")
+        self.setWindowTitle(f"留子答辩器 · 实时中英互译 v{__version__}")
         self.setWindowIcon(app_icon())
         self.resize(1380, 860)
         self.setMinimumSize(1060, 680)
@@ -514,7 +518,7 @@ class DefenseWindow(QMainWindow):
         row.setSpacing(10)
         stack.addLayout(row)
 
-        title = QLabel("答辩模式  /  LIVE")
+        title = QLabel("留子答辩器  /  LIVE")
         title.setStyleSheet(f"font-size: 23px; font-weight: 700; color: {TEXT_MAIN};")
         row.addWidget(title)
 
@@ -786,16 +790,14 @@ class DefenseWindow(QMainWindow):
         header_row.addWidget(self.memory_label)
         self.auto_record_check = QCheckBox("自动录音")
         self.auto_record_check.setChecked(bool(self.settings.get("auto_record", True)))
-        self.auto_record_check.setToolTip("勾选后点「开始答辩」自动录音，字幕与音频按次存入会议文件夹")
-        self.auto_record_check.toggled.connect(
-            lambda checked: self.settings.set("auto_record", bool(checked))
-        )
+        self.auto_record_check.setToolTip("开始答辩时自动录音；答辩中勾选或取消立即生效。老师声音与麦克风分别保存")
+        self.auto_record_check.toggled.connect(self.engine.set_auto_record)
         header_row.addWidget(self.auto_record_check)
         save_archive_button = QPushButton("保存本场记录")
         save_archive_button.clicked.connect(self._on_save_archive)
         header_row.addWidget(save_archive_button)
         save_audio_button = QPushButton("保存英文语音")
-        save_audio_button.setToolTip("把本场所有合成的英文语音存为一个 WAV（内存临时缓存）")
+        save_audio_button.setToolTip("保存软件合成的英文语音；老师原声请在记录文件夹的录音目录查找")
         save_audio_button.clicked.connect(self.engine.export_meeting_audio)
         header_row.addWidget(save_audio_button)
         open_folder_button = QPushButton("打开记录文件夹")
@@ -805,6 +807,11 @@ class DefenseWindow(QMainWindow):
         clear_button.clicked.connect(self._on_clear_memory)
         header_row.addWidget(clear_button)
         layout.addLayout(header_row)
+
+        self.recording_status_label = QLabel("录音未开启")
+        self.recording_status_label.setWordWrap(True)
+        self.recording_status_label.setToolTip("显示实际写入录音文件的时长；等待声音时请确认会议声音从所选评委设备播放")
+        layout.addWidget(self.recording_status_label)
 
         self.timeline = QTableWidget(0, 6)
         self.timeline.setHorizontalHeaderLabels(["时间", "谁", "原文", "译文", "延迟", "重播"])
@@ -823,6 +830,13 @@ class DefenseWindow(QMainWindow):
         )
         layout.addWidget(self.timeline)
         return container
+
+    def _refresh_recording_status(self) -> None:
+        state, message = self.engine.recording_status()
+        color = {"recording": "#2fd19b", "error": "#ff6262",
+                 "waiting": "#f5a623"}.get(state, TEXT_DIM)
+        self.recording_status_label.setText(message)
+        self.recording_status_label.setStyleSheet(f"color: {color};")
 
     def _build_recent_bar(self) -> QWidget:
         bar = QWidget()
@@ -1976,6 +1990,7 @@ class DefenseWindow(QMainWindow):
         self.statusBar().showMessage(f"已删除模式「{mode.name}」", 8000)
 
     def closeEvent(self, event) -> None:
+        self.recording_timer.stop()
         self._restore_error_hooks()
         try:
             save_session(self.settings.base_dir)   # 本场用量写进「消费记录」
@@ -9348,7 +9363,7 @@ class SettingsDialog(QDialog):
         self._show_all_devices = False  # 每次打开先精简；完整接口只用于本次排查。
         from .. import __version__
 
-        self.setWindowTitle(f"设置 · 答辩模式 v{__version__}")
+        self.setWindowTitle(f"设置 · 留子答辩器 v{__version__}")
         self.resize(1120, 780)
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -11993,7 +12008,6 @@ class ScriptDeskPanel(QWidget):
         for row, paragraph in enumerate(self.document.paragraphs):
             self.paragraph_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             title = QTableWidgetItem(paragraph.title)
-            title.setToolTip(paragraph.text)
             self.paragraph_table.setItem(row, 1, title)
             status = QTableWidgetItem(paragraph.status_text)
             status.setForeground(QColor(OK_GREEN if paragraph.ready else TEXT_DIM))
@@ -12067,7 +12081,6 @@ class ScriptDeskPanel(QWidget):
         for row, line in enumerate(lines):
             self.line_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
             preview = QTableWidgetItem(line.text)
-            preview.setToolTip(line.text)
             self.line_table.setItem(row, 1, preview)
             status = QTableWidgetItem(line.status_text)
             status.setToolTip(line.error or line.status_text)
@@ -13450,6 +13463,7 @@ class RehearsalDialog(QDialog):
 
 def run_app() -> int:
     app = QApplication.instance() or QApplication([])
+    app.setApplicationName("留子答辩器")
     app.setStyle("Fusion")
     app.setWindowIcon(app_icon())
     if "--smoke-test" in sys.argv:

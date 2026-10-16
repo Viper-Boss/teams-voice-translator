@@ -49,7 +49,7 @@ class DefenseUiTest(unittest.TestCase):
         window._rebuild_recent_buttons()
 
     def test_window_title(self) -> None:
-        self.assertIn("答辩模式", self.window.windowTitle())
+        self.assertIn("留子答辩器", self.window.windowTitle())
 
     def test_wheel_does_not_change_combo_or_spin(self) -> None:
         from PySide6.QtCore import QPointF, QPoint, Qt

@@ -1,261 +1,122 @@
-# Teams 双向课堂翻译与答辩工具 v1.16.15
+# 留子答辩器
 
-> 最新源码：1.16.15（2026-10-15）。答辩入口 `run_defense.bat`；Windows 分享版可使用 `build_share.ps1` 打包。
-> 本次同步包含独立评委识别、完整问题理解、问答库检查与导入导出、讲稿缓存与播放修复，以及 Qwen 复刻原声语气统一。
+**专门为留学生开会和答辩准备的 Windows 双向语音辅助工具。**
 
+和导师开会时听懂问题，用中文组织回答，再用自己的克隆音色说出英文；准备答辩时，把论文、讲稿和常见问题放到一个工作台里，提前试听、练习和保存。
 
-> **答辩模式（新）**：本机版本新增了面向论文答辩的精简实时翻译程序，带全场上下文记忆、
-> PPT 术语预习、克隆音色长连接合成和答辩前自检。入口 `run_defense.bat`，
-> 说明见 [答辩模式使用说明.md](答辩模式使用说明.md)。旧版功能保持不变（`run.bat`）。
-
-[![Release](https://img.shields.io/github/v/release/Viper-Boss/teams-voice-translator?display_name=tag)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
 [![CI](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/Viper-Boss/teams-voice-translator/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)
 
-这是一个面向 Windows + Microsoft Teams 的双向课堂翻译器。程序通过阿里云百炼官方接口处理实时识别与翻译，同时可在百炼云 TTS 和 VoiceStudio 本地 TTS 之间切换，并使用 Windows WASAPI 回环捕获老师在 Teams 中的声音。
+[使用说明](答辩模式使用说明.md) · [更新日志](CHANGELOG.md) · [问答库格式](问答库格式说明.md) · [参与开发](CONTRIBUTING.md)
 
-## 下载
+> 当前源码版本：**1.16.18**。主入口是 `run_defense.bat`，打包程序为 `DefenseMode.exe`。名称更新后仍沿用原来的配置和录音目录。
+> [Releases](https://github.com/Viper-Boss/teams-voice-translator/releases) 中的成品版本可能早于 main 分支，请核对版本号；本次更新以源码为准。
 
-- [下载最新 Windows x64 成品版](https://github.com/Viper-Boss/teams-voice-translator/releases/latest)
-- [查看 v1.14.8 更新记录](CHANGELOG.md#1148---2026-09-07)
-- [快速开始](快速开始.txt)
-- [交给下一位 AI 的接手总入口](AI_CONTINUATION_GUIDE.md)
+![留子答辩器主界面，使用空白演示配置](docs/images/main-window.png)
 
-发行包的 SHA-256 校验值见对应 Release 页面随附的 `.sha256` 文件。
+## 适合哪些场景
 
-> v1.14.8 增加讲稿中文原稿直接朗读；同时包含设备真锁定、语气预设、本地房间底噪和评委设备名称联动。个人主题素材由 `.gitignore` 排除，不包含在公开源码或发行包中。
+| 场景 | 可以怎么用 |
+| --- | --- |
+| 导师会议、课题讨论 | 看英文原文与中文翻译，直接用原声回答，或说中文后翻成英文发声 |
+| 组会与远程汇报 | 先整理术语和讲稿，提前合成语音，现场按段播放 |
+| 论文答辩准备 | 导入论文和 PPT，整理问题、核对答案，用第一人称练习回答 |
+| 答辩现场 | 评委字幕、整题理解、问答库和讲稿在同一窗口操作 |
+| 会后复盘 | 查看双语记录，回听麦克风、老师声音和混合录音 |
 
-> 本项目不附带阿里云百炼额度、API Key、VB-CABLE 驱动或 Microsoft Teams。云端模型调用会产生相应费用。
+## 主要功能
 
-## 核心能力
+- **双向字幕与发声**：对方英文转为中文字幕；自己的中文可翻译并合成为英文。字幕悬浮窗支持播放进度高亮。
+- **原声与翻译切换**：默认 `F8` 原声直通，`F9` 中文转英文；可选择按住说话或持续模式。`F8/F9 监听` 单独控制这两个通道的本机试听。
+- **独立评委识别**：评委识别运行在独立进程中，自己发声时仍可接收评委提问。
+- **整题理解与 AI 助答**：字幕照常翻译；另选理解模型汇总完整提问，再结合已导入的论文背景生成第一人称参考答案。可在主界面或助答弹窗操作。
+- **讲稿朗读台**：按段整理、预渲染和播放，显示总时长、当前位置与剩余时间；已合成音频保存在本机。
+- **问答库与快捷用语**：导入、编辑、检查和提前渲染常见回答；用快捷用语争取思考时间、确认问题或请求重复。
+- **人声播放互斥**：播放答案、讲稿等语音时暂停 F8/F9 输入，避免自己的原声与合成回答叠在一起；背景声单独控制。
+- **录音与归档**：老师声音、自己的麦克风和混合声音分别保存。显示实际录音状态和老师音频已保存时长；切换音色或模型时保持录音，更换录音设备时另存片段。
 
-- 你说中文（极速模式）：`Qwen3.5 LiveTranslate` 单条实时链路直接输出中文字幕、英文字幕和英文语音 → VB-CABLE → Teams。
-- 你说中文（传统模式）：实时 ASR → Qwen-MT → Qwen-Audio-TTS，保留编辑确认、翻译记忆和表达风格能力。
-- 老师说英文：捕获 Teams 扬声器声音 → 实时英文原文 → 中文字幕。
-- `F8` 原声：你的声音立即进入 Teams，同时在后台生成中英文字幕。
-- `F9` 翻译：可选择按住说话，或开启持续模式后按一次开始；持续模式由服务端自动检测停顿并逐句翻译。
-- F8 自动接管：F9 持续翻译期间按住 `F8`，程序会停止持续翻译并切换到原声通道。
-- 键盘输入：`Enter` 翻译并发送，`Ctrl+Enter` 或 `Shift+Enter` 换行。
-- 双向三轨录音：你的麦克风、老师系统声、双方混合会议各一份 WAV。
-- 完整时间轴：标记“我 / 老师”、中英文、时间和处理耗时，并支持搜索和双击重新载入。
-- 课程配置：按课程保存领域、术语、翻译记忆、表达风格、音色和 TTS 指令。
-- 一键本地声音复刻：直接选择 iPhone `M4A`、MP3、WAV 等录音，自动转换、临时上传、创建固定音色并清理样音；Qwen3 复刻使用 Base64 直传，无需 OSS。
-- 多 TTS 引擎共存：Qwen3-TTS-VC 实时/高清、Qwen-Audio、CosyVoice 可按模型分别保存克隆音色。
-- VoiceStudio 本地声音工作台：连接本机 `localhost:3900`，管理安装路径、自动/手动安装、SHA-256 校验、启停重启升级卸载、版本与后台进程，并同步本地模型和克隆声音。
-- 云/本地统一语音路由：传统 F9、键盘发声、历史重播和双语整段朗读共用所选后端；选择 VoiceStudio 后，文字和样音无需上传云端 TTS。
-- 双语整段朗读台：粘贴中文讲稿后先通读全文并结合课程领域、术语表和翻译记忆生成连贯英文；长稿自动先提取全局语境再分批对齐翻译，准备过程可以取消。
-- 连续朗读优化：当前句播放时后台预合成下一句，并缓存已经合成的 PCM；重复播放和跳回已读句不再重复调用 TTS。
-- 讲稿校对：独立窗口支持逐句编辑、结合全文重译单句、TTS 专用发音词典、仅本机试听，以及中英文同步句/词高亮、实际总时长、暂停/继续、拖动和点击跳句；可导出双语 SRT、TXT 或 JSON 工程数据。
-- 历史句重播：时间轴每句后点击 ▶ 即可重新朗读。
-- 字幕导出：中文、英文或双语；SRT、TXT、WebVTT、Markdown、JSONL 或全部格式。
-- AI 课堂总结：知识点、老师回答、作业待办、术语和待确认问题。
-- 临时缓存恢复：程序异常退出后可在下次启动时恢复尚未保存的双语字幕。
-- 整个窗口按四张参考稿重建为水晶极光导航式、Fluent 命令中心、午夜三栏工作台和暖色双栏工作室；水晶极光的会议控制台、本地声音工作台和设置页现已统一为同一套极光顶栏、玻璃卡片、左侧功能导航和矢量图标体系。
-- 四套布局与冰川水晶蓝、午夜蓝黑、琥珀暖白、Fluent 云白四套配色完全独立，可自由组合为 16 种外观，而不是四张固定皮肤。
-- 顶部“云端引擎 / 本地引擎”按钮可在百炼云 TTS 与 VoiceStudio 本地 TTS 间快速切换，并与设置页同步。
-- 可调透明度、字号和置顶状态的歌词式悬浮字幕。
+AI 生成内容需要结合自己的研究核对；它是沟通与准备工具，不会替你验证论文结论，也不承诺固定翻译延迟或音色完全一致。
 
-## 安装和启动
+## 第一次使用
 
-成品版直接解压并运行 `TeamsVoiceTranslator.exe`。仍需单独安装 [VB-CABLE 官方虚拟声卡](https://vb-audio.com/Cable/)，安装驱动后重启 Windows。
+需要 Windows 10/11、麦克风、耳机，以及自己的阿里云百炼账号与可用模型权限。把声音送进会议还需要 [VB-CABLE 虚拟声卡](https://vb-audio.com/Cable/)。软件不附带 API Key、云服务额度或驱动。
 
-源码运行：
+### 1. 启动程序
+
+已有打包版：完整解压文件夹，运行其中的 `DefenseMode.exe`。
+
+从源码运行：安装 64 位 Python 3.12，然后在项目目录执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\setup.ps1
-.\run.bat
+.\run_defense.bat
 ```
 
-## 百炼配置
+`run.bat` 保留为经典课堂模式入口；本文默认介绍主答辩工作台。
 
-在“设置”中填写北京地域的 Workspace ID 和 API Key，然后测试连通性。API Key 保存到 Windows 凭据管理器，不会写入源码或 `settings.json`。
+### 2. 配置账号与音色
 
-推荐在该业务空间中授权以下模型：
+打开「设置」，填写 Workspace ID 和 API Key，选择当前账号可用的识别、翻译与语音合成模型。克隆音色需要与合成模型匹配；切换模型后先试听，确认是自己的声音。
 
-- `qwen3.5-livetranslate-flash-realtime`：F9 极速中文语音直译英文字幕和语音。
-- `qwen3-asr-flash-realtime`：F8、老师字幕，以及极速直译的源语音转写。
-- `fun-asr-realtime`：可选的阿里云 Fun-ASR 实时识别引擎。
-- `qwen-mt-flash`：传统模式机器翻译。
-- `qwen3-tts-vc-realtime-2026-01-15`：传统模式实时 TTS，低延迟。
-- `qwen3-tts-vc-2026-01-22`：键盘输入/重播高清 TTS，更自然。
-- `qwen-audio-3.0-tts-plus`、`qwen-audio-3.0-tts-flash`：旧版传统 TTS，保留系统音色和情绪标签。
-- `cosyvoice-v3-flash`、`cosyvoice-v3.5-plus`：CosyVoice 克隆合成，v3.5-plus 相似度最高。
-- `qwen-voice-enrollment`：Qwen3 声音复刻。
-- `voice-enrollment`：旧版 Qwen-Audio/CosyVoice 声音复刻。
-- `qwen-plus`：可选的课堂总结。
+现场发声和提前渲染可以使用同一套模型与音色，也可以分别设置。听起来不一致时，先核对两套配置、语气指令和已缓存的旧音频。
 
-极速直译首次使用请选择“服务端复刻一次（推荐，无需上传样音）”。程序会在多次 F9 之间保留同一个 WebSocket：第一段用于建立音色校准，可能短暂使用默认过渡音色，第二段及后续会在同一会话内复用你的音色。持续模式天然复用整场连接。百炼当前可能拒绝为 `qwen3.5-livetranslate-flash-realtime` 预创建固定音色；固定 `voice_id` 因此仅作为已有兼容音色用户的高级选项。普通 TTS 的 `voice_id` 与 LiveTranslate 不能混用。模型协议和限制见[阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime)。
+### 3. 连接会议音频
 
-选择 FunASR 时，课程术语会作为官方 `input.context` 动态上下文发送；程序还会启用 `heartbeat`，并在连接意外中断后于下一段音频自动重连。若你已有在百炼预创建的稳定热词表，也可在代码层传入 `vocabulary_id`。程序不会向 FunASR 发送仅 Qwen-Audio Streaming 支持的内联 `vocabulary`。
+| 位置 | 选择 |
+| --- | --- |
+| 软件 → 麦克风 | 自己实际说话的麦克风 |
+| 软件 → 程序输出 | `CABLE Input` / 对应虚拟声卡的输入端 |
+| 会议软件 → 麦克风 | 同一条虚拟声卡的 `CABLE Output` |
+| 会议软件 → 扬声器 | 听导师或评委的耳机 |
+| 软件 → 对方声音回环 | 上一行耳机对应的 `[Loopback]` |
+| 软件 → 试听设备 | 自己听合成语音的耳机或输出设备 |
 
-## VoiceStudio 本地语音后端
+**CABLE Input 和 CABLE Output 名称相反是正常的：软件向 Input 播放，会议从 Output 接收。**
 
-本机版已把 [debpalash/VoiceStudio](https://github.com/debpalash/VoiceStudio) 作为可选本地 TTS 服务接入。VoiceStudio 仍以独立本地进程运行，本程序通过它公开的 OpenAI 兼容接口调用；这种结构能复用它的模型管理、GPU 调度和声音档案，同时保留本程序的 Teams 音频路由、字幕与长文朗读界面。
+为了避免试听声音再次进入评委识别，试听设备可以使用另一条独立音频输出。并非必须准备两副耳机，关键是播放与捕获设备的路由要正确。完整说明见[四种设备的分工](答辩模式使用说明.md#四种音频设备的分工)。
 
-1. 打开“本地声音工作台 → 运行管理”，选择安装路径后点击“自动下载安装”；下载阶段会显示百分比。
-2. 已自行下载 MSI 时，可点“导入 MSI 安装包”。程序会拉取 GitHub 最新版本和官方 SHA-256：一致显示绿色；不一致显示红色风险警告，但保留人工确认安装。
-3. 也可点“手动下载（GitHub）”直达官方 Releases。安装、升级、卸载、启动、停止和重启都可在同一页完成。
-4. 首次启动按 VoiceStudio 向导准备本地环境、下载模型，并在其中克隆或设计声音。
-5. 切到“声音库与试听”，点击“刷新状态与声音库”，选择声音档案并先本机试听。
-6. 点击“设为当前语音后端”。传统 F9、键盘发声、历史重播和整段朗读随后都会走本机服务。
+### 4. 先试一小段
 
-运行管理页同时显示已安装版本、API 版本、GitHub 最新版本和后台进程明细。API 正常时进程为绿色；进程存在但 API 未就绪或异常时为红色。通过本程序启动或连接并同步的 VoiceStudio 会被纳入本次会话管理；关闭本程序时会显示逐个关闭后台进程的进度，处理完后才退出。
+运行「自检」，让会议另一端说一句话，确认英文原文和中文翻译都出现；再分别试 F8、F9 与讲稿播放。勾选自动录音后，确认状态显示「老师录音中」且已保存时长增长，结束后打开录音文件回听。
 
-默认地址是 `http://127.0.0.1:3900`，本地接口不要求真实 API Key。VoiceStudio 在 Windows 上支持 CPU 和 NVIDIA CUDA；AMD GPU 与 Ryzen AI NPU 在其 Windows 版本中目前走 CPU。首次安装和模型下载约需 10–20 GB 可用空间。极速 F9 使用百炼单模型直接返回英文音频，因此不会被本地 TTS 后端替换；如需本地声音，请把 F9 切换为传统流水线。
+## 录音到底保存在哪里
 
-VoiceStudio 本体按 AGPL-3.0 发布，下载的可选模型仍各自适用其模型许可证。本仓库没有复制或修改 VoiceStudio 源码，只调用其公开本地 API。卸载按钮只卸载应用程序，默认保留 `%APPDATA%\OmniVoice` 等声音、项目、模型和环境数据；彻底清理应在 VoiceStudio 的“设置 → 存储”中单独确认。
-
-## 传统 TTS 一键本地声音复刻
-
-这套本地录音流程主要用于传统模式的 Qwen-Audio-TTS 克隆音色。LiveTranslate 推荐直接使用“服务端复刻一次”，不需要执行以下步骤。点击传统模式音色旁的“创建克隆音色”后可以直接选择本地录音，不再需要手工制作公网 URL：
-
-1. 首次使用点击“OSS 设置”，填写私有 Bucket 所在地域、Bucket 名称和 RAM AccessKey。
-2. 选择 iPhone `M4A`、MP3、WAV、AAC、CAF、FLAC、OGG、OPUS、WMA 或 MP4 音频。
-3. 程序自动裁剪为最多 30 秒，并转成 24 kHz、单声道、16-bit PCM WAV。
-4. 标准 WAV 使用随机对象名临时上传到私有 OSS，并生成 15 分钟 HTTPS 签名地址。
-5. 百炼返回普通 TTS 的固定 `voice_id` 后，程序自动填入并保存，同时立即删除 OSS 临时样音。
-
-阿里云建议使用 10–20 秒样音，至少包含 5 秒连续、清晰、无背景音乐的单人语音。参见[声音复刻官方指南](https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide)。
-
-建议给专用 RAM 用户只授予临时目录所需权限：
-
-```json
-{
-  "Version": "1",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["oss:PutObject", "oss:GetObject", "oss:DeleteObject"],
-      "Resource": ["acs:oss:*:*:你的Bucket/teams-voice-translator/temporary/*"]
-    }
-  ]
-}
-```
-
-Bucket 可以保持私有。AccessKey ID、AccessKey Secret 与百炼 API Key 均保存在 Windows 凭据管理器，不写入 `settings.json`。如果临时对象删除失败，程序会明确显示对象路径，方便手工删除。建议再为 `teams-voice-translator/temporary/` 前缀设置 1 天自动删除的 OSS 生命周期规则，作为电脑断电或程序异常退出时的隐私兜底。
-
-普通配置和日志分别位于：
+默认位置是 `文档\DefenseMode\答辩_时间\`，可在设置中修改。也可以直接点「打开记录文件夹」。
 
 ```text
-%APPDATA%\TeamsVoiceTranslator\settings.json
-%APPDATA%\TeamsVoiceTranslator\teams-voice-translator.log
+答辩_时间/
+├── 录音/
+│   ├── microphone_时间_标识.wav       自己的麦克风
+│   ├── teacher_system_时间_标识.wav   评委所用播放设备的声音
+│   └── meeting_mixed_时间_标识.wav    两轨混合
+├── 会议全记录.md
+└── 字幕/
+    ├── 中文字幕.txt
+    ├── 英文字幕.txt
+    └── 双语字幕.txt
 ```
 
-## 音频与 Teams 设置
+同场续录可能生成多个片段，请一起保留。`teacher_system` 录下的是所选设备播放的声音，设备上的其他声音也可能录入。
 
-程序中：
+**「保存英文语音」保存的是软件合成语音，不是老师的原声录音。** 如果没有配置评委回环，只能录到自己的麦克风，界面会提示。转写字幕不能替代原声备份，也不能还原未保存的录音。
 
-- 物理麦克风：你的真实麦克风。
-- Teams 虚拟输出：`CABLE Input (VB-Audio Virtual Cable)`。
-- 老师/Teams 系统声：选择与 Teams 扬声器对应的 `[Loopback]` 设备。
-- 本机试听：可选；开启时请佩戴耳机。
+## 费用与隐私
 
-Teams 中：
+- 云端识别、翻译、理解、回答生成、声音复刻和合成可能产生费用，按自己的服务商账号计费；费用统计与余额查询不保证同步反映账单。
+- 录音、字幕、论文、讲稿和音频缓存保存在本机；使用云模型时，相应音频、文本、论文上下文或样音会发送给所选服务。具体范围取决于启用的功能。
+- API Key 等凭据通过 Windows 凭据管理器保存；不要把自己的数据目录、日志或内存快照上传仓库。
+- 录音与 AI 辅助的使用应符合会议和学校要求，并取得相关参与者同意。详见[安全与数据说明](SECURITY.md)。
 
-- 麦克风：`CABLE Output (VB-Audio Virtual Cable)`。
-- 扬声器：你的耳机或正常播放设备。
-
-Windows 的命名方向是正确的：程序向 `CABLE Input` 播放，Teams 从 `CABLE Output` 录音。建议使用耳机，避免扬声器声音再次进入物理麦克风。
-
-可点击“运行音频设备诊断”检查普通输入、输出、WASAPI 回环和虚拟声卡选择。
-
-## 双向会议操作
-
-1. 点击“开始听老师 / Teams”，老师英文会逐句显示原文和中文翻译。
-2. 按住 `F8` 可用原声回答；松开后字幕会完整进入时间轴。若 F9 持续模式正在运行，按住 F8 会自动停止 F9 并接管为原声。
-3. 普通模式下按住 `F9` 说中文，松开后翻译并发给 Teams。勾选会议页的“F9 持续翻译”后，按一次 F9 开始持续监听；每次停顿会自动形成一句并翻译，再按一次 F9 停止。
-4. `Esc` 停止当前语音，并关闭老师监听。
-5. 软件自己播放英文时，会暂时阻止这段声音重新进入老师识别通道。
-
-F9 有两种翻译引擎：
-
-- 极速直译（推荐）：单个实时模型同时完成中文识别、英文翻译和英文语音，延迟更低；由于语音会边生成边播放，固定为自动发送。
-- 传统模式：ASR、机器翻译、TTS 三段处理，延迟较高，但支持先确认、翻译记忆、领域和表达风格。
-
-传统模式发送方式支持：
-
-- 立即翻译并发送：延迟最低。
-- 先确认/编辑：译文出现后可以修改，再点“播放/发送当前英文”。
-
-历史记录双击后会重新载入主编辑区，便于修改和重播。
-
-## 课程术语和配置
-
-“表格方式编辑课程术语”比手写 JSON 更方便。术语会自动双向使用，例如：
-
-```json
-[
-  {"source": "缺陷反演", "target": "defect inversion"},
-  {"source": "有限元", "target": "finite element method"}
-]
-```
-
-表达风格可选自然礼貌、简洁口语、正式学术或尽量逐字忠实。设置完成后在“课程配置”中保存，下次可从会议控制台快速切换。
-
-## 三轨录音
-
-点击“开始录音”会同时生成：
-
-```text
-microphone_时间.wav       你的物理麦克风
-teacher_system_时间.wav   Teams/老师系统声
-meeting_mixed_时间.wav    双方混合会议
-```
-
-三份文件都是 16 kHz、单声道、16-bit PCM WAV，适合语音归档和字幕校对。录制他人声音前请征得对方同意。
-
-如果录音与 F8/F9 同时使用时声卡报错，请在 Windows 声音设备高级设置中关闭“允许应用程序独占控制此设备”。
-
-## 字幕缓存和导出
-
-录制期间，程序始终把完整的时间、来源、中文和英文写入临时 JSONL 缓存。实时显示为纯中文或纯英文不会删减缓存。
-
-保存时可选择：
-
-- 语言：仅中文、仅英文、中英双语。
-- 格式：SRT、TXT、WebVTT、Markdown、JSONL、SRT+TXT 或全部。
-- 是否显示说话人和绝对时间。
-
-推荐同时保存 SRT + TXT：SRT 适合播放器、剪映和 Premiere；TXT 适合阅读。WebVTT 适合网页，Markdown 适合课堂笔记，JSONL 适合后续程序处理。
-
-正常退出时若字幕尚未导出会弹出提示；异常退出留下的缓存会在下次启动时提示恢复。
-
-## AI 课堂总结
-
-时间轴中有内容后点击“生成课堂总结”。默认使用 `qwen-plus`，生成结果可编辑后保存为 Markdown。总结会尝试整理课程主题、知识点、老师回答、作业待办、专业术语和需要再次确认的问题。模型只应作为辅助，专有名词和截止时间仍需人工检查。
-
-## 隐私和限制
-
-- 开启 F8、老师字幕或传统 F9 时，对应音频会发送到百炼实时 ASR。
-- 极速 F9 会把中文音频发送到 Qwen3.5 LiveTranslate，并接收英文字幕和音频流。
-- 传统 F9 与双向文本会发送到 Qwen-MT；需要发声时英文会发送到 Qwen-Audio-TTS。
-- 若语音后端选择 VoiceStudio，传统 F9/键盘/重播/整段朗读的 TTS 文本只发送到用户配置的本地 VoiceStudio 地址；默认地址为本机回环接口。
-- 点击课堂总结时，本次双向字幕会发送到所选 Qwen 总结模型。
-- API Key 由 Windows 凭据管理器保存；日志不记录 API Key。
-- 使用本地声音复刻时，标准化后的短样音会临时上传到用户配置的私有 OSS，并通过短时签名 URL 提供给百炼；程序会在请求完成后尝试立即删除。
-- 系统声回环会捕获所选播放设备上的声音，不只 Teams。会议期间不要在同一设备播放其他音频。
-- 本软件不是医疗、法律或专业同传服务；重要内容应人工确认。
-
-## 打包
+## 构建与参与
 
 ```powershell
-.\build.ps1
+# 本机运行版：dist\DefenseMode\DefenseMode.exe
+.\build_defense.ps1
+
+# 分享版：排除个人主题，生成压缩包与说明
+.\build_share.ps1
 ```
 
-输出位于：
-
-```text
-dist\TeamsVoiceTranslator\TeamsVoiceTranslator.exe
-```
-
-## 开源许可
-
-Copyright (C) 2026 Viper-Boss
-
-本项目以 **GNU GPL v3.0 or later** 发布。你可以使用、研究、修改和再分发本项目；如果分发基于本项目的修改版或衍生程序，必须按 GPLv3 兼容方式同时提供对应源代码，并保留许可证与版权声明。完整条款见 [LICENSE](LICENSE)。
-
-第三方依赖仍分别适用其原始许可证。本段仅为通俗说明，不替代许可证正文。
-
-欢迎提交 Issue 和 Pull Request，具体见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请按 [SECURITY.md](SECURITY.md) 私密报告。
+开发与测试方法见 [CONTRIBUTING.md](CONTRIBUTING.md)。本项目使用 [GPL-3.0-or-later](LICENSE)；随附环境音素材的来源见 [CREDITS.md](teams_voice_translator/ambience_assets/CREDITS.md)。仓库路径暂时沿用 `teams-voice-translator`。

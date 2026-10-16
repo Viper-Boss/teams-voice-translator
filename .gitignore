@@ -25,23 +25,10 @@ Thumbs.db
 # Personal CrystalDiskInfo/Shizuku artwork: local use only, never publish.
 teams_voice_translator/local_assets/
 
-# Public source hygiene
+# Local recovery data and private working files must never be published.
 test-artifacts/
 样音/
 *.pcm
-defense_settings.json
-!teams_voice_translator/ambience_assets/*.wav
-
-# Public source hygiene
-test-artifacts/
-样音/
-*.pcm
-defense_settings.json
-!teams_voice_translator/ambience_assets/*.wav
-
-# Public source hygiene
-test-artifacts/
-样音/
-*.pcm
+*.dmp
 defense_settings.json
 !teams_voice_translator/ambience_assets/*.wav
